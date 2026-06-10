@@ -1,0 +1,14 @@
+# Environment (secrets)
+.env.local
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+.next/
+out/
+dist/
+.tsbuildinfo
+
+# OS
+.DS_Store
