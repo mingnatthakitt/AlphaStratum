@@ -12,6 +12,20 @@
 
 > AI-powered quantitative stock analysis — regime detection, Monte Carlo forecasting, technical indicators, risk models, and grounded AI chat with live source citations.
 
+## Screenshots
+
+| Dashboard | Models |
+|---|---|
+| ![Dashboard](images/Dashboard.png) | ![Models](images/Models.png) |
+
+| Backtest | Portfolio |
+|---|---|
+| ![Backtest](images/Backtest.png) | ![Portfolio](images/Portfolio.png) |
+
+| AI Advisor | Screener |
+|---|---|
+| ![Advisor](images/Advisor.png) | ![Screener](images/Screener.png) |
+
 ## Stack
 
 | Layer | Tech |
