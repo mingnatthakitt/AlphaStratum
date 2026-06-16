@@ -35,7 +35,7 @@
 | Backend | FastAPI (Python) |
 | Database | PostgreSQL + pgvector (Supabase) |
 | LLM | MiniMax via Anthropic-compatible API |
-| RAG | LangChain-style retrieval + inline citations |
+| AI Context | Live data injection + inline citations |
 | Data | Yahoo Finance, NewsAPI, SEC EDGAR |
 | Math | `arch`, `hmmlearn`, `numpy`, `networkx` |
 | Deploy | Vercel (frontend) + Render (backend) |
@@ -73,7 +73,7 @@ Persistent multi-lot holdings backed by Supabase Postgres. Add multiple purchase
 Hypothetical investment calculator. Enter a ticker, entry date, and dollar amount to see what the position would be worth today vs. entry price — shares bought, total return, percentage gain/loss.
 
 ### AI Advisor (`/advisor`)
-Chat with RAG-grounded responses. Every answer is generated with all available data inline — no black boxes. Each claim is cited with its source:
+Chat with live context-injected responses. Every answer is generated with news, prices, filings, and quantitative data fetched at query time and injected into the prompt — no black boxes. Each claim is cited with its source:
 
 | Data | Source | Cited as |
 |---|---|---|
@@ -199,7 +199,7 @@ uvicorn main:app --reload --port 8000
 
 ## API Reference
 
-All endpoints (except RAG) require `?key=AUTH_PASSWORD` as a query parameter.
+All endpoints (except `/chat`) require `?key=AUTH_PASSWORD` as a query parameter.
 
 ### Fetch
 | Method | Path | Description |
@@ -259,7 +259,7 @@ Browser (Next.js)
   └── Vercel (API Routes + Static)
         └── FastAPI Backend (Render or localhost:8000)
               ├── Yahoo Finance  ── charts, RSI, MACD, Bollinger, VaR, Pairs, ATR, Regime-Cond MC
-              ├── NewsAPI / SEC EDGAR  ── RAG grounding
+              ├── NewsAPI / SEC EDGAR  ── context injection for AI Advisor
               ├── arch / hmmlearn / numpy / networkx  ── GARCH, Markov, Monte Carlo
               └── PostgreSQL + pgvector (Supabase)  ── portfolio, watchlist, result cache
 ```
