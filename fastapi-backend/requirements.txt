@@ -1,18 +1,15 @@
-fastapi
-uvicorn[standard]
-yfinance
-numpy
-arch
-hmmlearn
-statsmodels
-networkx
-scikit-learn
-httpx
-python-dotenv
-beautifulsoup4
-psycopg[binary]
-psycopg_pool
-sqlalchemy
-pgvector
-anthropic
-python-multipart
+# Direct dependencies, pinned for reproducible builds (Render/CI).
+# Transitive deps (pandas, scipy, requests, ...) resolve from these pins.
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+yfinance==1.7.0
+numpy==2.5.3
+arch==8.0.0
+networkx==3.7
+requests==2.34.2
+httpx==0.28.1
+python-dotenv==1.2.3
+beautifulsoup4==4.15.0
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3
+anthropic==1.8.0

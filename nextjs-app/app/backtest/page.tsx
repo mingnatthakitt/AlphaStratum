@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { stockApi } from "@/lib/api";
+import { computeBacktest, type BacktestError, type BacktestResult } from "@/lib/backtest";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,19 +12,12 @@ import { TrendingUp, TrendingDown, Calculator, ArrowRight } from "lucide-react";
 import { WatchlistTabs, SearchModal } from "@/components/StockWatchlist";
 import { useWatchlist } from "@/contexts/WatchlistContext";
 
-interface BacktestResult {
-  symbol: string;
-  entryDate: string;
-  exitDate: string;
-  investment: number;
-  shares: number;
-  entryPrice: number;
-  exitPrice: number;
-  currentValue: number;
-  totalReturn: number;
-  totalReturnPct: number;
-  priceChangePct: number;
-}
+const ERROR_MESSAGES: Record<BacktestError, string> = {
+  "no-data": "No price data available for this ticker.",
+  "date-too-early": "Entry date is before the available price history (1 year). Pick a later date.",
+  "date-too-late": "Entry date is in the future — pick a date within the available history.",
+  "invalid-input": "Enter a valid ticker, date, and positive investment amount.",
+};
 
 export default function BacktestPage() {
   const { watchlist, activeSymbol, setActiveSymbol, removeStock, addStock, isLoading: watchlistLoading } = useWatchlist();
@@ -31,76 +26,53 @@ export default function BacktestPage() {
   const [entryDate, setEntryDate] = useState("");
   const [investment, setInvestment] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [error, setError] = useState<BacktestError | null>(null);
+  const [running, setRunning] = useState(false);
 
-  // Sync symbol from watchlist selection (only on initial load / watchlist changes)
+  // Sync symbol from watchlist selection (only when the field is untouched)
   useEffect(() => {
-    if (activeSymbol && !symbol) {
-      setSymbol(activeSymbol);
-    }
+    if (activeSymbol && !symbol) setSymbol(activeSymbol);
   }, [activeSymbol, symbol]);
 
-  const { data: tickerData, isLoading } = useQuery({
-    queryKey: ["ticker", symbol],
-    queryFn: () => {
-      const params = new URLSearchParams({ key: process.env.AUTH_KEY || "" });
-      return fetch(`/api/proxy/fetch/ticker/${symbol}?${params}`).then((r) => r.json());
-    },
-    enabled: false,
-  });
-
   const runBacktest = async () => {
-    if (!symbol || !entryDate || !investment) return;
+    setError(null);
+    setResult(null);
     const inv = parseFloat(investment);
-    if (isNaN(inv) || inv <= 0) return;
-
-    // Fetch ticker data to get current price + historical prices
-    const params = new URLSearchParams({ key: process.env.AUTH_KEY || "" });
-    const res = await fetch(`/api/proxy/fetch/ticker/${symbol.toUpperCase()}?${params}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    const ohlcv = data.ohlcv || [];
-    const currentPrice = data.info?.price;
-    if (!currentPrice || ohlcv.length === 0) return;
-
-    // Find entry price on entryDate
-    const entryIdx = ohlcv.findIndex((d: { date: string }) => d.date >= entryDate);
-    if (entryIdx < 0) return;
-    const entryPrice = ohlcv[entryIdx].close;
-    const shares = inv / entryPrice;
-    const currentValue = shares * currentPrice;
-    const totalReturn = currentValue - inv;
-    const totalReturnPct = (totalReturn / inv) * 100;
-    const priceChangePct = ((currentPrice - entryPrice) / entryPrice) * 100;
-    const exitDate = ohlcv[ohlcv.length - 1].date;
-
-    setResult({
-      symbol: symbol.toUpperCase(),
-      entryDate: ohlcv[entryIdx].date,
-      exitDate,
-      investment: inv,
-      shares,
-      entryPrice,
-      exitPrice: currentPrice,
-      currentValue,
-      totalReturn,
-      totalReturnPct,
-      priceChangePct,
-    });
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized || !entryDate || !Number.isFinite(inv) || inv <= 0) {
+      setError("invalid-input");
+      return;
+    }
+    setRunning(true);
+    try {
+      const res = await stockApi.getTicker(normalized);
+      const ohlcv = res.data?.ohlcv ?? [];
+      const outcome = computeBacktest(normalized, ohlcv, entryDate, inv);
+      if (outcome.ok) {
+        setResult(outcome.result);
+      } else {
+        setError(outcome.error);
+      }
+    } catch {
+      setError("no-data");
+    } finally {
+      setRunning(false);
+    }
   };
 
-  const fmt = (n: number) =>
-    n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const today = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Backtest</h1>
-          <p className="text-muted-foreground mt-1">
-            See what a hypothetical investment would be worth today.
-          </p>
+          <p className="text-muted-foreground mt-1">See what a hypothetical investment would be worth today.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setShowSearch(true)}>+ Add to Watchlist</Button>
+        <Button variant="outline" size="sm" onClick={() => setShowSearch(true)}>
+          + Add to Watchlist
+        </Button>
       </div>
 
       {watchlistLoading ? (
@@ -114,12 +86,8 @@ export default function BacktestPage() {
             setSymbol(sym);
           }}
           onRemove={removeStock}
-          onAdd={() => setShowSearch(true)}
+          onOpenSearch={() => setShowSearch(true)}
         />
-      )}
-
-      {symbol && (
-        <p className="text-sm text-muted-foreground">Selected: <span className="font-semibold text-foreground">{symbol}</span></p>
       )}
 
       <Card>
@@ -132,25 +100,36 @@ export default function BacktestPage() {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Ticker</label>
+              <label htmlFor="bt-ticker" className="text-xs text-muted-foreground mb-1 block">
+                Ticker
+              </label>
               <Input
+                id="bt-ticker"
                 placeholder="e.g. AAPL"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value.toUpperCase())}
                 className="uppercase"
+                maxLength={10}
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Entry Date</label>
+              <label htmlFor="bt-date" className="text-xs text-muted-foreground mb-1 block">
+                Entry Date
+              </label>
               <Input
+                id="bt-date"
                 type="date"
                 value={entryDate}
                 onChange={(e) => setEntryDate(e.target.value)}
+                max={today}
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Investment ($)</label>
+              <label htmlFor="bt-amount" className="text-xs text-muted-foreground mb-1 block">
+                Investment ($)
+              </label>
               <Input
+                id="bt-amount"
                 type="number"
                 placeholder="e.g. 10000"
                 value={investment}
@@ -159,11 +138,20 @@ export default function BacktestPage() {
               />
             </div>
             <div className="flex items-end">
-              <Button onClick={runBacktest} disabled={!symbol || !entryDate || !investment} className="w-full">
-                Calculate
+              <Button
+                onClick={runBacktest}
+                disabled={!symbol || !entryDate || !investment || running}
+                className="w-full"
+              >
+                {running ? "Calculating…" : "Calculate"}
               </Button>
             </div>
           </div>
+          {error && (
+            <p className="mt-3 text-sm text-red-500" role="alert">
+              {ERROR_MESSAGES[error]}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -208,7 +196,9 @@ export default function BacktestPage() {
                 </div>
                 <div className="p-4 rounded-lg border">
                   <p className="text-xs text-muted-foreground mb-1">Current Value</p>
-                  <p className={`text-xl font-bold ${result.currentValue >= result.investment ? "text-green-500" : "text-red-500"}`}>
+                  <p
+                    className={`text-xl font-bold ${result.currentValue >= result.investment ? "text-green-500" : "text-red-500"}`}
+                  >
                     ${fmt(result.currentValue)}
                   </p>
                 </div>
@@ -217,17 +207,21 @@ export default function BacktestPage() {
                   <p className={`text-xl font-bold ${result.totalReturn >= 0 ? "text-green-500" : "text-red-500"}`}>
                     {result.totalReturn >= 0 ? "+" : ""}${fmt(result.totalReturn)}
                     <span className="text-sm font-normal ml-1">
-                      ({result.totalReturn >= 0 ? "+" : ""}{result.totalReturnPct.toFixed(2)}%)
+                      ({result.totalReturn >= 0 ? "+" : ""}
+                      {result.totalReturnPct.toFixed(2)}%)
                     </span>
                   </p>
                 </div>
               </div>
 
               {/* Price change breakdown */}
-              <div className="text-sm text-muted-foreground flex items-center gap-2">
-                <span>Entry ${result.entryPrice.toFixed(2)} → Exit ${result.exitPrice.toFixed(2)}</span>
+              <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-2">
+                <span>
+                  Entry ${result.entryPrice.toFixed(2)} → Exit ${result.exitPrice.toFixed(2)}
+                </span>
                 <span className={result.priceChangePct >= 0 ? "text-green-500" : "text-red-500"}>
-                  {result.priceChangePct >= 0 ? "+" : ""}{result.priceChangePct.toFixed(2)}% price change
+                  {result.priceChangePct >= 0 ? "+" : ""}
+                  {result.priceChangePct.toFixed(2)}% price change
                 </span>
                 <span>|</span>
                 <span>{result.shares.toFixed(4)} shares held</span>
@@ -238,7 +232,7 @@ export default function BacktestPage() {
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        Uses end-of-day closing prices. Does not account for dividends, taxes, or slippage. Not financial advice.
+        Uses end-of-day closing prices (1-year history). Does not account for dividends, taxes, or slippage. Not financial advice.
       </p>
 
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} onAdd={addStock} />}

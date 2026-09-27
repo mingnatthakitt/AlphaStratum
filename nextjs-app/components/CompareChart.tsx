@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useMemo, useCallback } from "react";
-import { createChart, IChartApi, Time, AreaSeries } from "lightweight-charts";
+import { useEffect, useMemo, useRef } from "react";
+import { AreaSeries, Time } from "lightweight-charts";
 import type { OHLCVData } from "@/lib/api";
+import { safeRemoveSeries, useChart } from "@/hooks/useChart";
 
 interface Props {
   primary: { data: OHLCVData[]; symbol: string };
@@ -22,38 +23,14 @@ function toPercentChange(ohlcv: OHLCVData[]): { time: Time; value: number }[] {
 
 export default function CompareChart({ primary, secondary }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<{ primary: any; secondary: any } | null>(null);
+  const chart = useChart(containerRef);
 
-  // Memoize normalized data so useEffect dependency is stable by reference
+  // Memoize normalized data so the effect dependency is stable by reference
   const primaryData = useMemo(() => toPercentChange(primary.data), [primary.data]);
   const secondaryData = useMemo(() => toPercentChange(secondary.data), [secondary.data]);
 
-  // Stable legend strings
-  const primaryLabel = useMemo(() => primary.symbol, [primary.symbol]);
-  const secondaryLabel = useMemo(() => secondary.symbol, [secondary.symbol]);
-
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    const chart = createChart(containerRef.current, {
-      layout: {
-        background: { color: "transparent" },
-        textColor: "hsl(var(--muted-foreground))",
-      },
-      grid: {
-        vertLines: { color: "hsl(var(--border))" },
-        horzLines: { color: "hsl(var(--border))" },
-      },
-      crosshair: { mode: 1 },
-      timeScale: {
-        borderColor: "hsl(var(--border))",
-        timeVisible: true,
-      },
-      rightPriceScale: {
-        borderColor: "hsl(var(--border))",
-      },
-    });
+    if (!chart) return;
 
     const primarySeries = chart.addSeries(AreaSeries, {
       lineColor: "#3b82f6",
@@ -61,44 +38,25 @@ export default function CompareChart({ primary, secondary }: Props) {
       bottomColor: "rgba(59, 130, 246, 0.01)",
       lineWidth: 2,
       priceLineVisible: false,
-      lastValueVisible: true,
-      priceFormat: { format: "percent", precision: 2, decimals: 2 },
+      priceFormat: { format: "percent", precision: 2, decimals: 2 } as never,
     });
-
     const secondarySeries = chart.addSeries(AreaSeries, {
       lineColor: "#f59e0b",
       topColor: "rgba(245, 158, 11, 0.2)",
       bottomColor: "rgba(245, 158, 11, 0.01)",
       lineWidth: 2,
       priceLineVisible: false,
-      lastValueVisible: true,
-      priceFormat: { format: "percent", precision: 2, decimals: 2 },
+      priceFormat: { format: "percent", precision: 2, decimals: 2 } as never,
     });
-
     primarySeries.setData(primaryData);
     secondarySeries.setData(secondaryData);
-
-    seriesRef.current = { primary: primarySeries, secondary: secondarySeries };
-    chartRef.current = chart;
     chart.timeScale().fitContent();
 
-    const handleResize = () => {
-      if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
-      }
-    };
-
-    window.addEventListener("resize", handleResize);
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(containerRef.current);
-
     return () => {
-      window.removeEventListener("resize", handleResize);
-      resizeObserver.disconnect();
-      chart.remove();
+      safeRemoveSeries(chart, primarySeries);
+      safeRemoveSeries(chart, secondarySeries);
     };
-    // Only depend on memoized data arrays — stable references prevent unnecessary redraws
- }, [primaryData, secondaryData]);
+  }, [chart, primaryData, secondaryData]);
 
   return (
     <div>
@@ -106,11 +64,11 @@ export default function CompareChart({ primary, secondary }: Props) {
       <div className="flex items-center justify-center gap-6 mt-2 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded-sm bg-blue-500/80" />
-          {primaryLabel}
+          {primary.symbol}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded-sm bg-amber-500/80" />
-          {secondaryLabel}
+          {secondary.symbol}
         </span>
         <span>Normalized % change from first data point of each ticker</span>
       </div>

@@ -1,25 +1,20 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { stockApi } from "@/lib/api";
+import type { WatchlistItem } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { X, Plus, Search } from "lucide-react";
 
-export interface WatchlistItem {
-  symbol: string;
-  price: number;
-  change: number;
-  changePercent: number;
-  regime?: "bull" | "bear" | "sideways";
-  lastRegime?: "bull" | "bear" | "sideways";
-}
+export type { WatchlistItem };
 
 export function SearchModal({ onClose, onAdd }: { onClose: () => void; onAdd: (item: WatchlistItem) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ symbol: string; name: string; exchange: string }[]>([]);
   const [searching, setSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -43,15 +38,33 @@ export function SearchModal({ onClose, onAdd }: { onClose: () => void; onAdd: (i
     };
   }, [query]);
 
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    },
+    [onClose],
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-background rounded-2xl border border-border shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+      onKeyDown={onKeyDown}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add stock to watchlist"
+        className="bg-background rounded-2xl border border-border shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-muted-foreground" />
             <span className="font-semibold">Add Stock</span>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose}>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close search">
             <X className="w-4 h-4" />
           </Button>
         </div>
@@ -62,6 +75,7 @@ export function SearchModal({ onClose, onAdd }: { onClose: () => void; onAdd: (i
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="mb-3"
+            aria-label="Search company name or ticker"
           />
           {searching && <p className="text-sm text-muted-foreground text-center py-2">Searching...</p>}
           {!searching && results.length === 0 && query.length >= 1 && (
@@ -98,21 +112,19 @@ export function WatchlistTabs({
   activeSymbol,
   onSelect,
   onRemove,
-  onAdd,
+  onOpenSearch,
 }: {
   watchlist: WatchlistItem[];
   activeSymbol: string;
   onSelect: (symbol: string) => void;
   onRemove: (symbol: string) => void;
-  onAdd: (item: WatchlistItem) => void;
+  onOpenSearch: () => void;
 }) {
-  const handleAddClick = () => { onAdd({ symbol: "", price: 0, change: 0, changePercent: 0 }); };
-
   if (!watchlist || watchlist.length === 0) {
     return (
       <div className="flex items-center gap-2">
         <p className="text-sm text-muted-foreground">Your watchlist is empty.</p>
-        <Button size="sm" variant="outline" onClick={handleAddClick} className="gap-1.5">
+        <Button size="sm" variant="outline" onClick={onOpenSearch} className="gap-1.5">
           <Plus className="w-4 h-4" /> Add Stock
         </Button>
       </div>
@@ -121,38 +133,61 @@ export function WatchlistTabs({
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <div className="flex items-center gap-1 overflow-x-auto pb-1 flex-1">
+      <div className="flex items-center gap-1 overflow-x-auto pb-1 flex-1" role="tablist" aria-label="Watchlist">
         {watchlist.map((item) => {
           const isActive = item.symbol === activeSymbol;
           const up = (item.changePercent ?? 0) >= 0;
+          // A missing quote must not render as a real +0.0% — that reads as a
+          // genuine flat price rather than "we don't have data right now".
+          const hasQuote = item.hasQuote !== false;
           return (
-            <button
+            <div
               key={item.symbol}
-              onClick={() => onSelect(item.symbol)}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+                isActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
               }`}
             >
-              <span>{item.symbol || "—"}</span>
-<span className={`text-xs ${isActive ? "opacity-70" : up ? "text-green-500" : "text-red-400"}`}>
-                {up ? "+" : ""}{(item.changePercent ?? 0).toFixed(1)}%
-              </span>
-              <span
-                  onClick={(e) => { e.stopPropagation(); onRemove(item.symbol); }}
-                  className="ml-0.5 hover:text-red-400 rounded-full p-0.5"
+              <button
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => onSelect(item.symbol)}
+                className="flex items-center gap-2"
+              >
+                <span>{item.symbol || "—"}</span>
+                <span
+                  className={`text-xs ${
+                    !hasQuote
+                      ? "text-muted-foreground"
+                      : isActive
+                        ? "opacity-70"
+                        : up
+                          ? "text-green-500"
+                          : "text-red-400"
+                  }`}
+                  title={hasQuote ? undefined : "Price unavailable — quotes failed to load"}
                 >
-                  <X className="w-3 h-3" />
+                  {hasQuote ? `${up ? "+" : ""}${(item.changePercent ?? 0).toFixed(1)}%` : "—"}
                 </span>
+              </button>
+              <button
+                onClick={() => onRemove(item.symbol)}
+                aria-label={`Remove ${item.symbol} from watchlist`}
+                className="hover:text-red-400 rounded-full p-0.5"
+              >
+                <X className="w-3 h-3" />
+              </button>
               {item.regime && item.lastRegime && item.regime !== item.lastRegime && (
-                <span className="ml-0.5 w-2 h-2 rounded-full bg-orange-400 animate-pulse" title={`Regime flipped ${item.lastRegime}→${item.regime}`} />
+                <span
+                  className="w-2 h-2 rounded-full bg-orange-400 animate-pulse"
+                  title={`Regime flipped ${item.lastRegime} → ${item.regime}`}
+                  aria-label={`Regime flipped from ${item.lastRegime} to ${item.regime}`}
+                />
               )}
-            </button>
+            </div>
           );
         })}
       </div>
-      <Button size="sm" variant="outline" onClick={handleAddClick} className="gap-1.5">
+      <Button size="sm" variant="outline" onClick={onOpenSearch} className="gap-1.5">
         <Plus className="w-4 h-4" /> Add
       </Button>
     </div>

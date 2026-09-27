@@ -1,133 +1,103 @@
-  -- FinanceAI Database Schema
-  -- PostgreSQL + pgvector for RAG semantic search
+-- AlphaStratum Database Schema
+-- PostgreSQL (Supabase). Direct psycopg connection via DATABASE_URL.
+--
+-- Only the tables the application actually uses are defined here:
+-- model results cache, portfolio holdings, and the watchlist.
+-- (An earlier version also defined stocks/prices/news/embeddings + pgvector
+-- for a planned RAG pipeline that was never wired up — removed. If you ran
+-- the old schema, those tables are harmless; a DROP block is provided at the
+-- bottom to clean them up.)
 
-  -- Enable pgvector
-  CREATE EXTENSION IF NOT EXISTS vector;
+-- ── Model Result Cache ─────────────────────────────────────────────────────
+-- Expensive model outputs (markov, garch, montecarlo, screener, ...) keyed by
+-- sha256(endpoint | version | params) with a 15-minute TTL enforced app-side
+-- (cache.py). Best-effort: a cache miss means "recompute and write back".
 
-  -- ── Stocks ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS model_cache (
+    key        VARCHAR(64) PRIMARY KEY,
+    endpoint   VARCHAR(100) NOT NULL,     -- e.g. 'markov', 'montecarlo', 'screener'
+    payload    JSONB NOT NULL,
+    cached_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-  CREATE TABLE IF NOT EXISTS stocks (
-      id SERIAL PRIMARY KEY,
-      symbol      VARCHAR(10) UNIQUE NOT NULL,
-      name        VARCHAR(255),
-      sector      VARCHAR(100),
-      created_at  TIMESTAMPTZ DEFAULT NOW()
-  );
+CREATE INDEX IF NOT EXISTS idx_model_cache_endpoint ON model_cache(endpoint);
+CREATE INDEX IF NOT EXISTS idx_model_cache_cached_at ON model_cache(cached_at);
 
-  -- ── Price Cache ─────────────────────────────────────────────────────────────
+-- ── Portfolio Holdings ─────────────────────────────────────────────────────
+-- Persisted across browsers/devices. Each row is one lot (multiple lots per
+-- symbol supported). user_id is a placeholder for a single-user deployment —
+-- kept so a real auth layer can be added without a migration.
 
-  CREATE TABLE IF NOT EXISTS prices (
-      id SERIAL PRIMARY KEY,
-      symbol VARCHAR(10) NOT NULL REFERENCES stocks(symbol),
-      date        DATE NOT NULL,
-      open DECIMAL(10, 4),
-      high        DECIMAL(10, 4),
-      low DECIMAL(10, 4),
-      close       DECIMAL(10, 4),
-      volume      BIGINT,
-      cached_at   TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (symbol, date)
-  );
+CREATE TABLE IF NOT EXISTS portfolio_holdings (
+    id          SERIAL PRIMARY KEY,
+    user_id     VARCHAR(100) NOT NULL DEFAULT 'default',
+    symbol      VARCHAR(10) NOT NULL,
+    shares      DECIMAL(18, 8) NOT NULL,  -- fractional shares supported
+    avg_cost    DECIMAL(12, 4) NOT NULL,
+    entry_date  DATE,                        -- optional YYYY-MM-DD
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
 
-  CREATE INDEX IF NOT EXISTS idx_prices_symbol_date ON prices(symbol, date DESC);
-  CREATE INDEX IF NOT EXISTS idx_prices_cached_at ON prices(cached_at);
+CREATE INDEX IF NOT EXISTS idx_portfolio_user ON portfolio_holdings(user_id);
 
-  -- ── News& Filings ──────────────────────────────────────────────────────────
+-- entry_date is written by the app on insert (see db.upsert_holding). It was
+-- previously declared but never populated, so every row carried NULL.
 
-  CREATE TABLE IF NOT EXISTS news (
-      id          SERIAL PRIMARY KEY,
-      symbol      VARCHAR(10) NOT NULL REFERENCES stocks(symbol),
-      title       TEXT NOT NULL,
-      source      VARCHAR(255),
-      url         TEXT,
-      snippet     TEXT,
-      published_at TIMESTAMPTZ,
-      cached_at   TIMESTAMPTZ DEFAULT NOW()
-  );
+-- ── Watchlist ──────────────────────────────────────────────────────────────
 
-  CREATE INDEX IF NOT EXISTS idx_news_symbol ON news(symbol);
-  CREATE INDEX IF NOT EXISTS idx_news_cached_at ON news(cached_at);
+CREATE TABLE IF NOT EXISTS watchlist (
+    id          SERIAL PRIMARY KEY,
+    user_id     VARCHAR(100) NOT NULL DEFAULT 'default',
+    symbol      VARCHAR(10) NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (user_id, symbol)
+);
 
-  -- ── RAG Embeddings ─────────────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
 
-  CREATE TABLE IF NOT EXISTS embeddings (
-      id          SERIAL PRIMARY KEY,
-      symbol      VARCHAR(10) NOT NULL REFERENCES stocks(symbol),
-      content     TEXT NOT NULL,
-      source_type VARCHAR(50), -- '10k', '10q', 'news', 'transcript'
-      embedding VECTOR(768),
-      metadata_   JSONB,
-      created_at  TIMESTAMPTZ DEFAULT NOW()
-  );
+-- ── Hygiene ────────────────────────────────────────────────────────────────
+-- Never store raw API keys — use env vars only.
+-- All queries are parameterized (no SQL interpolation).
 
-  CREATE INDEX IF NOT EXISTS idx_embeddings_symbol ON embeddings(symbol);
-  CREATE INDEX IF NOT EXISTS idx_embeddings_source_type ON embeddings(source_type);
+-- Row Level Security.
+--
+-- The app connects with the Supabase `postgres` role (a superuser), which
+-- bypasses RLS entirely — so these statements do not change current
+-- behaviour. They are here so that the DEFAULT is deny: if anyone later
+-- points the browser at Supabase with the `anon` key, the tables stay
+-- unreadable/unwritable until a policy is written deliberately, instead of
+-- being wide open because RLS was simply never enabled.
+ALTER TABLE model_cache       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE portfolio_holdings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlist         ENABLE ROW LEVEL SECURITY;
+-- No policies are defined on purpose — see the note above.
 
-  -- Exact nearest neighbor (slower build, faster query — fine for <100k rows)
-  CREATE INDEX IF NOT EXISTS idx_embeddings_exact ON embeddings USING hnsw (embedding vector_cosine_ops);
+-- ── Cache retention ────────────────────────────────────────────────────────
+-- The 15-minute TTL in cache.py is enforced on READ only; expired rows are
+-- never deleted. model_cache would therefore grow without bound, which on a
+-- free Supabase project (500 MB) eventually fills the database.
+--
+-- Schedule a daily purge. Requires the pg_cron extension (available on all
+-- Supabase plans; enable it in the dashboard under Database → Extensions if
+-- the statements below fail):
+--
+--   CREATE EXTENSION IF NOT EXISTS pg_cron;
+--   SELECT cron.schedule(
+--       'alphastratum-cache-retention',
+--       '17 3 * * *',                       -- daily at 03:17 UTC
+--       $$DELETE FROM model_cache WHERE cached_at < NOW() - INTERVAL '1 day'$$
+--   );
+--
+-- One day is far longer than the 15-minute TTL, so this only removes rows no
+-- reader could ever hit again. To cancel: SELECT cron.unschedule(...).
 
-  -- ── Model Result Cache ─────────────────────────────────────────────────────
-  -- Stores expensive model outputs (Markov regime, GARCH, Monte Carlo) keyed by
-  -- (endpoint, params_hash) with a 15-minute TTL. Best-effort: the API layer
-  -- treats cache misses as "recompute and write back".
-
-  CREATE TABLE IF NOT EXISTS model_cache (
-      key        VARCHAR(64) PRIMARY KEY,   -- sha256(endpoint|params)[:24] in hex
-      endpoint   VARCHAR(100) NOT NULL,     -- e.g. 'markov', 'montecarlo', 'garch'
-      payload    JSONB NOT NULL,
-      cached_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_model_cache_endpoint ON model_cache(endpoint);
-  CREATE INDEX IF NOT EXISTS idx_model_cache_cached_at ON model_cache(cached_at);
-
-  -- ── Portfolio Holdings ─────────────────────────────────────────────────────
-  -- Persisted across browsers/devices. Each row is one position.
-  -- user_id is a placeholder — for a solo internal tool, use a fixed device ID
-  -- or skip the column entirely if no auth layer is needed.
-
-  CREATE TABLE IF NOT EXISTS portfolio_holdings (
-      id          SERIAL PRIMARY KEY,
-      user_id     VARCHAR(100) NOT NULL DEFAULT 'default',
-      symbol      VARCHAR(10) NOT NULL,
-      shares      DECIMAL(18, 8) NOT NULL,  -- fractional shares supported
-      avg_cost    DECIMAL(12, 4) NOT NULL,
-      entry_date  DATE,                        -- optional YYYY-MM-DD
-      created_at  TIMESTAMPTZ DEFAULT NOW(),
-      updated_at  TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_portfolio_user ON portfolio_holdings(user_id);
-
-  -- ── Watchlist ─────────────────────────────────────────────────────────────
-  -- Per-user stock watchlist with regime alert tracking.
-
-  CREATE TABLE IF NOT EXISTS watchlist (
-      id          SERIAL PRIMARY KEY,
-      user_id     VARCHAR(100) NOT NULL DEFAULT 'default',
-      symbol      VARCHAR(10) NOT NULL,
-      created_at  TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (user_id, symbol)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id);
-
-  -- ── Watchlist Regime Alerts ────────────────────────────────────────────────
-  -- Tracks the last known regime per symbol so we can alert on bull→bear flips.
-  -- Polled periodically; updated when regime changes.
-
-  CREATE TABLE IF NOT EXISTS watchlist_regime_state (
-      id          SERIAL PRIMARY KEY,
-      user_id     VARCHAR(100) NOT NULL DEFAULT 'default',
-      symbol      VARCHAR(10) NOT NULL,
-      regime      VARCHAR(20) NOT NULL,  -- 'bull', 'bear', 'sideways'
-      updated_at  TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (user_id, symbol)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_watchlist_regime_user ON watchlist_regime_state(user_id);
-
-  -- ── Scrubbing ───────────────────────────────────────────────────────────────
-
-  -- Never store raw API keys — use env vars only
-  -- All user inputs are parameterized (no SQL interpolation)
+-- ── Optional cleanup for deployments that ran the old schema ───────────────
+-- (tables that were never used by application code)
+--
+-- DROP TABLE IF EXISTS embeddings;
+-- DROP TABLE IF EXISTS news;
+-- DROP TABLE IF EXISTS prices;
+-- DROP TABLE IF EXISTS watchlist_regime_state;
+-- DROP TABLE IF EXISTS stocks;
+-- DROP EXTENSION IF EXISTS vector;

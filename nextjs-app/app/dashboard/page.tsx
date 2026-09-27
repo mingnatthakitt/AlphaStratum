@@ -14,6 +14,7 @@ import AtrChart from "@/components/AtrChart";
 import RegimeCondChart from "@/components/RegimeCondChart";
 import MonteCarloChart from "@/components/MonteCarloChart";
 import MarkovChart from "@/components/MarkovChart";
+import { QueryRender, ErrorBox } from "@/components/QueryFeedback";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowUpDown, Activity } from "lucide-react";
@@ -43,70 +44,72 @@ export default function DashboardPage() {
   const [showCompareSearch, setShowCompareSearch] = useState(false);
   const [compareModel, setCompareModel] = useState<ModelId | null>(null);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["ticker", activeSymbol],
     queryFn: () => stockApi.getTicker(activeSymbol),
     enabled: !!activeSymbol,
   });
 
-  const { data: regimeData } = useQuery({
+  // Model queries are gated on the compare panel being open for that model —
+  // switching symbols no longer fires ~10 requests for hidden charts.
+  const { data: regimeData, isError: regimeError, error: regimeErrorDetails } = useQuery({
     queryKey: ["regime", activeSymbol],
     queryFn: () => stockApi.getRegime(activeSymbol),
     enabled: !!activeSymbol,
   });
 
-  const { data: mcData } = useQuery({
+  const { data: mcData, isLoading: mcLoading, isPending: mcPending, isError: mcError, error: mcErrorDetails, refetch: mcRefetch } = useQuery({
     queryKey: ["montecarlo", activeSymbol, mcHorizon],
     queryFn: () => stockApi.getMonteCarlo(activeSymbol, mcHorizon),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "mc-standard",
   });
 
-  const { data: mcRegimeCondData } = useQuery({
+  const { data: mcRegimeCondData, isLoading: mcRegimeCondLoading, isPending: mcRegimeCondPending, isError: mcRegimeCondError, error: mcRegimeCondErrorDetails, refetch: mcRegimeCondRefetch } = useQuery({
     queryKey: ["montecarlo-regime-cond", activeSymbol, mcHorizon] as const,
     queryFn: () => stockApi.getMonteCarloRegimeCond(activeSymbol, mcHorizon),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "mc-regime",
   });
 
-  const { data: rsiData } = useQuery({
+  const { data: rsiData, isLoading: rsiLoading, isPending: rsiPending, isError: rsiError, error: rsiErrorDetails, refetch: rsiRefetch } = useQuery({
     queryKey: ["rsi", activeSymbol],
     queryFn: () => stockApi.getRSI(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "rsi",
   });
 
-  const { data: macdData } = useQuery({
+  const { data: macdData, isLoading: macdLoading, isPending: macdPending, isError: macdError, error: macdErrorDetails, refetch: macdRefetch } = useQuery({
     queryKey: ["macd", activeSymbol],
     queryFn: () => stockApi.getMACD(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "macd",
   });
 
-  const { data: bollingerData } = useQuery({
+  const { data: bollingerData, isLoading: bollingerLoading, isPending: bollingerPending, isError: bollingerError, error: bollingerErrorDetails, refetch: bollingerRefetch } = useQuery({
     queryKey: ["bollinger", activeSymbol],
     queryFn: () => stockApi.getBollinger(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "bollinger",
   });
 
-  const { data: garchData } = useQuery({
+  const { data: garchData, isLoading: garchLoading, isPending: garchPending, isError: garchError, error: garchErrorDetails, refetch: garchRefetch } = useQuery({
     queryKey: ["garch", activeSymbol],
     queryFn: () => stockApi.getGarch(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "garch",
   });
 
-  const { data: atrData } = useQuery({
+  const { data: atrData, isLoading: atrLoading, isPending: atrPending, isError: atrError, error: atrErrorDetails, refetch: atrRefetch } = useQuery({
     queryKey: ["atr", activeSymbol],
     queryFn: () => stockApi.getAtr(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "atr",
   });
 
-  const { data: markovData } = useQuery({
+  const { data: markovData, isLoading: markovLoading, isPending: markovPending, isError: markovError, error: markovErrorDetails, refetch: markovRefetch } = useQuery({
     queryKey: ["markov", activeSymbol],
     queryFn: () => stockApi.getMarkov(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: compareModel === "markov",
   });
 
-  const { data: compareData } = useQuery({
+  const { data: compareData, isLoading: compareLoading } = useQuery({
     queryKey: ["ticker", compareSymbol],
-    queryFn: () => (compareSymbol ? stockApi.getTicker(compareSymbol) : null),
-    enabled: !!compareSymbol,
+    queryFn: () => stockApi.getTicker(compareSymbol as string),
+    enabled: showCompare && !!compareSymbol,
   });
 
   const info: StockInfo | undefined = data?.data?.info;
@@ -131,13 +134,16 @@ export default function DashboardPage() {
           activeSymbol={activeSymbol}
           onSelect={setActiveSymbol}
           onRemove={removeStock}
-          onAdd={() => setShowSearch(true)}
+          onOpenSearch={() => setShowSearch(true)}
         />
       )}
 
       {error && (
-        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm">
-          Failed to load data for {activeSymbol}. Check the ticker symbol or try again.
+        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm flex items-center justify-between">
+          <span>Failed to load data for {activeSymbol}. Check the ticker symbol or try again.</span>
+          <Button size="sm" variant="outline" onClick={() => refetch()}>
+            Retry
+          </Button>
         </div>
       )}
 
@@ -147,12 +153,11 @@ export default function DashboardPage() {
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-xl">{activeSymbol}</CardTitle>
-                {info && (
-                  <span className="text-2xl font-bold">${info.price.toFixed(2)}</span>
-                )}
+                {info && <span className="text-2xl font-bold">${info.price.toFixed(2)}</span>}
                 {info && (
                   <span className={`text-sm ${info.change >= 0 ? "text-green-500" : "text-red-500"}`}>
-                    {info.change >= 0 ? "+" : ""}{info.change.toFixed(2)} ({info.changePercent.toFixed(2)}%)
+                    {info.change >= 0 ? "+" : ""}
+                    {info.change.toFixed(2)} ({info.changePercent.toFixed(2)}%)
                   </span>
                 )}
               </div>
@@ -168,12 +173,13 @@ export default function DashboardPage() {
                     </button>
                   ))}
                 </div>
-                {regimeData && <RegimeBadge regime={regimeData.data.currentRegime} />}
+                {regimeData?.data && <RegimeBadge regime={regimeData.data.currentRegime} />}
                 {(compareModel === "mc-standard" || compareModel === "mc-regime") && (
                   <select
                     value={mcHorizon}
                     onChange={(e) => setMcHorizon(Number(e.target.value))}
                     className="rounded border border-input bg-background px-2 py-1 text-xs"
+                    aria-label="Monte Carlo horizon"
                   >
                     <option value={15}>15d</option>
                     <option value={30}>30d</option>
@@ -184,12 +190,15 @@ export default function DashboardPage() {
                 )}
                 <select
                   value={compareModel ?? ""}
-                  onChange={(e) => setCompareModel(e.target.value ? e.target.value as ModelId : null)}
+                  onChange={(e) => setCompareModel(e.target.value ? (e.target.value as ModelId) : null)}
                   className="rounded border border-input bg-background px-2 py-1 text-xs"
+                  aria-label="Add a model comparison panel"
                 >
                   <option value="">+ Model</option>
                   {MODEL_OPTIONS.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
                   ))}
                 </select>
                 <Button
@@ -197,7 +206,10 @@ export default function DashboardPage() {
                   size="sm"
                   onClick={() => {
                     if (!showCompare) setShowCompareSearch(true);
-                    else { setShowCompare(false); setCompareSymbol(null); }
+                    else {
+                      setShowCompare(false);
+                      setCompareSymbol(null);
+                    }
                   }}
                   className="gap-1.5 text-xs"
                 >
@@ -212,19 +224,19 @@ export default function DashboardPage() {
                     primary={{ data: ohlcv, symbol: activeSymbol }}
                     secondary={{ data: compareOhlcv, symbol: compareSymbol }}
                   />
+                ) : compareLoading ? (
+                  <Skeleton className="h-[400px] w-full" />
                 ) : (
                   <div className="h-[400px] flex items-center justify-center text-muted-foreground">
-                    Loading compare data for {compareSymbol || "..."}...
+                    {compareSymbol
+                      ? `Couldn't load data for ${compareSymbol} — try another ticker.`
+                      : "Pick a ticker to compare."}
                   </div>
                 )
               ) : isLoading ? (
                 <Skeleton className="h-[400px] w-full" />
               ) : ohlcv.length > 0 ? (
-                <CandlestickChart
-                  data={ohlcv}
-                  symbol={activeSymbol}
-                  view={chartView}
-                />
+                <CandlestickChart data={ohlcv} symbol={activeSymbol} view={chartView} />
               ) : (
                 <div className="h-[400px] flex items-center justify-center text-muted-foreground">No chart data available</div>
               )}
@@ -239,58 +251,79 @@ export default function DashboardPage() {
                   <CardTitle className="text-base capitalize">
                     {MODEL_OPTIONS.find((m) => m.id === compareModel)?.label} — {activeSymbol}
                   </CardTitle>
-                  <button
-                    onClick={() => setCompareModel(null)}
-                    className="text-xs text-muted-foreground hover:text-primary"
-                  >
+                  <button onClick={() => setCompareModel(null)} className="text-xs text-muted-foreground hover:text-primary">
                     ✕ Close
                   </button>
                 </div>
               </CardHeader>
               <CardContent>
-                {compareModel === "rsi" && rsiData?.data && (
-                  <RSIChart
-                    rsi={rsiData.data.rsi}
-                    signal={rsiData.data.signal}
-                    history={rsiData.data.history}
-                  />
+                {compareModel === "rsi" && (
+                  <QueryRender data={rsiData?.data} isLoading={rsiLoading} isPending={rsiPending} isError={rsiError} error={rsiErrorDetails} refetch={rsiRefetch}>
+                    {(d) => <RSIChart rsi={d.rsi} signal={d.signal} history={d.history} dates={d.dates} />}
+                  </QueryRender>
                 )}
-                {compareModel === "macd" && macdData?.data && (
-                  <MACDBarChart
-                    macd={macdData.data.macd}
-                    signal={macdData.data.signal}
-                    histogram={macdData.data.histogram}
-                    macdHistory={macdData.data.macdHistory}
-                    signalHistory={macdData.data.signalHistory}
-                    histogramHistory={macdData.data.histogramHistory}
-                  />
+                {compareModel === "macd" && (
+                  <QueryRender data={macdData?.data} isLoading={macdLoading} isPending={macdPending} isError={macdError} error={macdErrorDetails} refetch={macdRefetch}>
+                    {(d) => (
+                      <MACDBarChart
+                        macd={d.macd}
+                        signal={d.signal}
+                        histogram={d.histogram}
+                        macdHistory={d.macdHistory}
+                        signalHistory={d.signalHistory}
+                        histogramHistory={d.histogramHistory}
+                        dates={d.dates}
+                      />
+                    )}
+                  </QueryRender>
                 )}
-                {compareModel === "bollinger" && bollingerData?.data && (
-                  <BollingerChart
-                    sma={bollingerData.data.sma}
-                    upper={bollingerData.data.upper}
-                    lower={bollingerData.data.lower}
-                    bandwidth={bollingerData.data.bandwidth}
-                    percentB={bollingerData.data.percentB}
-                    period={bollingerData.data.period}
-                    numStd={bollingerData.data.numStd}
-                    history={bollingerData.data.history}
-                  />
+                {compareModel === "bollinger" && (
+                  <QueryRender data={bollingerData?.data} isLoading={bollingerLoading} isPending={bollingerPending} isError={bollingerError} error={bollingerErrorDetails} refetch={bollingerRefetch}>
+                    {(d) => (
+                      <BollingerChart
+                        sma={d.sma}
+                        upper={d.upper}
+                        lower={d.lower}
+                        bandwidth={d.bandwidth}
+                        percentB={d.percentB}
+                        period={d.period}
+                        numStd={d.numStd}
+                        history={d.history}
+                        dates={d.dates}
+                      />
+                    )}
+                  </QueryRender>
                 )}
-                {compareModel === "garch" && garchData?.data && (
-                  <GarchChart data={garchData.data} />
+                {compareModel === "garch" && (
+                  <QueryRender data={garchData?.data} isLoading={garchLoading} isPending={garchPending} isError={garchError} error={garchErrorDetails} refetch={garchRefetch}>
+                    {(d) => <GarchChart data={d} />}
+                  </QueryRender>
                 )}
-                {compareModel === "atr" && atrData?.data && (
-                  <AtrChart data={atrData.data} />
+                {compareModel === "atr" && (
+                  <QueryRender data={atrData?.data} isLoading={atrLoading} isPending={atrPending} isError={atrError} error={atrErrorDetails} refetch={atrRefetch}>
+                    {(d) => <AtrChart data={d} />}
+                  </QueryRender>
                 )}
-                {compareModel === "markov" && markovData?.data && (
-                  <MarkovChart data={markovData.data} />
+                {compareModel === "markov" && (
+                  <QueryRender data={markovData?.data} isLoading={markovLoading} isPending={markovPending} isError={markovError} error={markovErrorDetails} refetch={markovRefetch}>
+                    {(d) => <MarkovChart data={d} />}
+                  </QueryRender>
                 )}
-                {compareModel === "mc-standard" && mcData?.data && (
-                  <MonteCarloChart data={mcData.data} />
+                {compareModel === "mc-standard" && (
+                  <QueryRender data={mcData?.data} isLoading={mcLoading} isPending={mcPending} isError={mcError} error={mcErrorDetails} refetch={mcRefetch} height="400px">
+                    {(d) => <MonteCarloChart data={d} />}
+                  </QueryRender>
                 )}
-                {compareModel === "mc-regime" && mcRegimeCondData?.data && (
-                  <RegimeCondChart data={mcRegimeCondData.data} />
+                {compareModel === "mc-regime" && (
+                  <QueryRender
+                    data={mcRegimeCondData?.data}
+                    isLoading={mcRegimeCondLoading} isPending={mcRegimeCondPending}
+                    isError={mcRegimeCondError} error={mcRegimeCondErrorDetails}
+                    refetch={mcRegimeCondRefetch}
+                    height="400px"
+                  >
+                    {(d) => <RegimeCondChart data={d} />}
+                  </QueryRender>
                 )}
               </CardContent>
             </Card>
@@ -312,7 +345,13 @@ export default function DashboardPage() {
                 <>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-sm text-muted-foreground">Market Cap</span>
-                    <span className="text-sm font-medium">{info.marketCap > 0 ? (info.marketCap >= 1e12 ? `$${(info.marketCap / 1e12).toFixed(2)}T` : `$${(info.marketCap / 1e9).toFixed(2)}B`) : "N/A"}</span>
+                    <span className="text-sm font-medium">
+                      {info.marketCap > 0
+                        ? info.marketCap >= 1e12
+                          ? `$${(info.marketCap / 1e12).toFixed(2)}T`
+                          : `$${(info.marketCap / 1e9).toFixed(2)}B`
+                        : "N/A"}
+                    </span>
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-sm text-muted-foreground">P/E Ratio</span>
@@ -320,7 +359,9 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-sm text-muted-foreground">Volume</span>
-                    <span className="text-sm font-medium">{info.volume >= 1e6 ? `${(info.volume / 1e6).toFixed(2)}M` : `${(info.volume / 1e3).toFixed(0)}K`}</span>
+                    <span className="text-sm font-medium">
+                      {info.volume >= 1e6 ? `${(info.volume / 1e6).toFixed(2)}M` : `${(info.volume / 1e3).toFixed(0)}K`}
+                    </span>
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-sm text-muted-foreground">52W High</span>
@@ -332,13 +373,21 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-border/50">
                     <span className="text-sm text-muted-foreground">Daily Change</span>
-                    <span className={`text-sm font-medium ${info.change >= 0 ? "text-green-500" : "text-red-500"}`}>{info.change >= 0 ? "+" : ""}{info.change.toFixed(2)} ({info.changePercent.toFixed(2)}%)</span>
+                    <span className={`text-sm font-medium ${info.change >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {info.change >= 0 ? "+" : ""}
+                      {info.change.toFixed(2)} ({info.changePercent.toFixed(2)}%)
+                    </span>
                   </div>
-                  {regimeData && (
+                  {regimeData?.data && (
                     <>
                       <div className="flex justify-between items-center py-2 border-b border-border/50">
                         <span className="text-sm text-muted-foreground">20D Momentum</span>
-                        <span className={`text-sm font-medium ${regimeData.data.momentum >= 0 ? "text-green-500" : "text-red-500"}`}>{regimeData.data.momentum >= 0 ? "+" : ""}{regimeData.data.momentum.toFixed(1)}%</span>
+                        <span
+                          className={`text-sm font-medium ${regimeData.data.momentum >= 0 ? "text-green-500" : "text-red-500"}`}
+                        >
+                          {regimeData.data.momentum >= 0 ? "+" : ""}
+                          {regimeData.data.momentum.toFixed(1)}%
+                        </span>
                       </div>
                       <div className="flex justify-between items-center py-2 border-b border-border/50">
                         <span className="text-sm text-muted-foreground">Ann. Volatility</span>
@@ -361,7 +410,9 @@ export default function DashboardPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {regimeData ? (
+              {regimeError ? (
+                <ErrorBox height="80px" message="Regime data unavailable" />
+              ) : regimeData?.data ? (
                 <div className="space-y-3">
                   <div className="flex justify-between">
                     <span className="text-sm text-muted-foreground">Current Regime</span>
@@ -371,12 +422,19 @@ export default function DashboardPage() {
                     <div key={regime} className="space-y-1">
                       <div className="flex justify-between text-xs">
                         <span className="capitalize">{regime}</span>
-                        <span>{(prob * 100).toFixed(1)}%</span>
+                        <span>{((prob as number) * 100).toFixed(1)}%</span>
                       </div>
-                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-1.5 rounded-full bg-muted overflow-hidden"
+                        role="meter"
+                        aria-label={`${regime} probability`}
+                        aria-valuenow={Math.round((prob as number) * 100)}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
                         <div
                           className={`h-full rounded-full ${regime === "bull" ? "bg-green-500" : regime === "bear" ? "bg-red-500" : "bg-yellow-500"}`}
-                          style={{ width: `${(prob as number * 100)}%` }}
+                          style={{ width: `${(prob as number) * 100}%` }}
                         />
                       </div>
                     </div>
@@ -391,7 +449,8 @@ export default function DashboardPage() {
       </div>
 
       <p className="text-xs text-muted-foreground text-center">
-        Regime detection uses 20-day rolling returns. Monte Carlo forecasts are probability distributions, not predictions. Not financial advice.
+        Regime detection uses daily return thresholds. Monte Carlo forecasts are probability distributions, not predictions. Not
+        financial advice.
       </p>
 
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} onAdd={addStock} />}

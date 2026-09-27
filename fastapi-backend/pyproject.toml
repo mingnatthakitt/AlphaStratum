@@ -1,0 +1,34 @@
+[project]
+name = "alphastratum-backend"
+version = "0.2.0"
+description = "AlphaStratum FastAPI backend"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = [".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    # HTTPException-raising inside `except` is idiomatic FastAPI; the active
+    # exception is already logged (with traceback) by services.errors before
+    # the new raise happens.
+    "B904",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning:arch",
+    "ignore::DeprecationWarning:dateutil",
+]

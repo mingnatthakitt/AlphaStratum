@@ -1,0 +1,67 @@
+# Render blueprint for the FastAPI backend.
+# Deploy: Render dashboard → New → Blueprint → select this repo.
+# The frontend stays on Vercel (see README). Set the env vars below in the
+# Render dashboard (secrets must not be committed).
+services:
+  - type: web
+    name: alphastratum-api
+    runtime: python
+    rootDir: fastapi-backend
+    buildCommand: pip install -r requirements.txt
+    # --proxy-headers + --forwarded-allow-ips '*' makes uvicorn resolve the
+    # real client address from X-Forwarded-For, which the auth middleware needs
+    # for its per-IP failed-attempt throttle. '*' is safe here only because
+    # Render's edge is the sole thing that can reach this service.
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
+    healthCheckPath: /health
+    plan: free
+    # Free instances spin down after ~15 minutes idle and take 50s+ to wake.
+    # The first request after an idle period will exceed the frontend proxy's
+    # 25s default timeout and fail in the UI — use an always-on instance for
+    # real use (see LIMITATIONS.md).
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+      - key: DATABASE_URL
+        sync: false # Supabase pooler connection string — set in the dashboard
+      # THE ONLY thing protecting this service. The backend is on its own
+      # PUBLIC hostname — Vercel's auth protects the frontend pages only, and
+      # does nothing for this URL. If this value is missing, empty, or still the
+      # .env.example placeholder, the API rejects every request rather than
+      # serving anonymously. Mirror the generated value into Vercel as AUTH_KEY.
+      - key: AUTH_PASSWORD
+        generateValue: true
+      # NEVER set this to 1 on a deployed service: it disables authentication
+      # entirely and publishes the API to anyone who finds the host. It exists
+      # only for local development without a .env file.
+      - key: AUTH_DEV_MODE
+        value: "0"
+      # Set this to your real Vercel URL in the dashboard. `sync: false` creates
+      # the var EMPTY (it does not leave it unset), so the code treats it as
+      # "unconfigured" and falls back to the localhost dev default rather than
+      # silently pointing CORS at a domain that does not exist.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_BASE_URL
+        sync: false
+      # Optional: leave blank to use the built-in default model. The code
+      # treats an empty value as "unset" rather than passing "" to the API.
+      - key: ANTHROPIC_MODEL
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      # Optional: forces a provider instead of auto-detecting from which key
+      # is present. Valid values: anthropic | gemini
+      - key: LLM_PROVIDER
+        sync: false
+      - key: NEWSAPI_KEY
+        sync: false
+      # Optional: Yahoo fallback for the ticker endpoint.
+      - key: ALPHA_VANTAGE_KEY
+        sync: false
