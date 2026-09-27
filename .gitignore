@@ -1,7 +1,11 @@
 # Environment
+# Ignore every .env variant, but keep the committed examples.
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
+!.env.*.example
 
 ._*
 # Python
@@ -12,11 +16,25 @@ __pycache__/
 dist/
 build/
 *.egg
+.venv/
+venv/
+ENV/
+
+# Test / lint caches
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.coverage
+coverage/
+htmlcov/
+**/coverage/
+**/htmlcov/
 
 # Next.js
 .next/
 out/
 node_modules/
+*.tsbuildinfo
 
 # Vercel
 .vercel/
@@ -28,6 +46,7 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+.zcode/
 
 # Logs
 *.log

@@ -67,6 +67,7 @@ export interface AtrResult {
   period: number;
   signal: "high" | "normal" | "low";
   history: number[];
+  dates?: string[];
 }
 
 export interface GarchResult {
@@ -96,6 +97,7 @@ export interface RSIResult {
   signal: "overbought" | "oversold" | "neutral";
   period: number;
   history: number[];
+  dates?: string[];
 }
 
 export interface MACDResult {
@@ -105,6 +107,7 @@ export interface MACDResult {
   macdHistory: number[];
   signalHistory: number[];
   histogramHistory: number[];
+  dates?: string[];
 }
 
 export interface BollingerResult {
@@ -116,6 +119,7 @@ export interface BollingerResult {
   period: number;
   numStd: number;
   history: { sma: number; upper: number; lower: number; bandwidth: number; percentB: number }[];
+  dates?: string[];
 }
 
 export interface VaRContribution {
@@ -131,6 +135,7 @@ export interface VaRResult {
   confidence95: string;
   confidence99: string;
   contributions: VaRContribution[];
+  excludedSymbols?: string[];
 }
 
 export interface PairsResult {
@@ -180,9 +185,30 @@ export interface ScreenerResponse {
   stocks: ScreenerStock[];
 }
 
+export interface WatchlistItem {
+  symbol: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  regime?: "bull" | "bear" | "sideways";
+  lastRegime?: "bull" | "bear" | "sideways";
+  /**
+   * False when the quotes poll failed or has not landed yet. Lets the UI show
+   * "—" rather than a fabricated $0.00 / +0.0%, which is indistinguishable
+   * from a genuinely flat price.
+   */
+  hasQuote?: boolean;
+}
+
 export const stockApi = {
   getTicker: (symbol: string) =>
     api.get<{ info: StockInfo; ohlcv: OHLCVData[] }>(`/fetch/ticker/${symbol}`),
+
+  getQuotes: (symbols: string[]) =>
+    api.get<{ quotes: { symbol: string; price: number; change: number; changePercent: number; name: string }[] }>(
+      "/fetch/quotes",
+      { params: { symbols: symbols.join(",") } },
+    ),
 
   getNews: (symbol: string) =>
     api.get<{ articles: { title: string; source: string; date: string; url: string; snippet: string }[] }>(`/fetch/news/${symbol}`),
@@ -236,12 +262,14 @@ export const stockApi = {
     api.get<{ default: string; available: { anthropic: boolean; gemini: boolean }; models: { anthropic: string; gemini: string } }>("/rag/providers"),
 
   chat: (message: string, symbol?: string, provider?: string) =>
-    api.post<{ answer: string; citations: { text: string; source: string; url?: string }[]; provider: string; model: string }>("/rag/chat", { message, symbol, provider }),
+    api.post<{ answer: string; citations: { text: string; source: string; date?: string; url?: string }[]; provider: string; model: string }>("/rag/chat", { message, symbol, provider }),
 
   // Portfolio (Supabase)
   getHoldings: () => api.get<PortfolioHolding[]>("/portfolio/holdings"),
   upsertHolding: (symbol: string, shares: number, avgCost: number) =>
     api.post<PortfolioHolding>("/portfolio/holdings", { symbol, shares, avgCost }),
+  updateHolding: (lotId: number, shares: number, avgCost: number) =>
+    api.patch<PortfolioHolding>(`/portfolio/holdings/${lotId}`, { shares, avgCost }),
   deleteHolding: (lotId: number) =>
     api.delete(`/portfolio/holdings/${lotId}`),
 
@@ -252,5 +280,42 @@ export const stockApi = {
   removeFromWatchlist: (symbol: string) =>
     api.delete(`/portfolio/watchlist/${symbol}`),
 };
+
+/**
+ * Turn a failed request into a message that names the actual cause.
+ *
+ * The backend distinguishes several failure modes that one generic "couldn't
+ * load data" string would blur together — most importantly a 503, which means
+ * the server has no usable AUTH_PASSWORD and is refusing every request. That is
+ * an operator misconfiguration, not a data problem, and telling the user to wait
+ * out a rate limit sends them nowhere.
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (!axios.isAxiosError(error)) return fallback;
+  const status = error.response?.status;
+  switch (status) {
+    case 401:
+      return "Unauthorized — the server rejected the API key. Check that AUTH_KEY on Vercel matches AUTH_PASSWORD on the backend.";
+    case 403:
+      return "That request was blocked by the server's path allowlist.";
+    case 413:
+      return "Request was too large for the server to accept.";
+    case 429:
+      return "Too many failed sign-in attempts — wait a few minutes, then retry.";
+    case 503:
+      return "The server has no usable AUTH_PASSWORD, so it is rejecting every request. Check the backend's environment variables.";
+    default:
+      if (status !== undefined && status >= 500) {
+        return `The server hit an internal error (HTTP ${status}). Check the backend logs.`;
+      }
+      if (error.code === "ECONNABORTED") {
+        return "The request timed out — the backend may be cold-starting (free-tier instances sleep).";
+      }
+      if (!error.response) {
+        return "Couldn't reach the backend. It may be asleep or unreachable.";
+      }
+      return fallback;
+  }
+}
 
 export default api;

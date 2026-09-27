@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { toCsv } from "@/lib/csv";
 import { Download } from "lucide-react";
-import type { EnrichedHolding } from "@/app/portfolio/page";
+import type { EnrichedLot } from "@/app/portfolio/page";
 
 interface Props {
-  holdings: EnrichedHolding[];
+  holdings: EnrichedLot[];
   totalValue: number;
   totalCost: number;
   totalPnl: number;
@@ -20,8 +20,6 @@ export default function PortfolioCsvExport({
   totalPnl,
   totalPnlPct,
 }: Props) {
-  const ref = useRef<HTMLButtonElement>(null);
-
   const exportCsv = () => {
     const header = ["Symbol", "Shares", "Avg Cost", "Price", "Value", "Cost Basis", "P&L ($)", "P&L (%)", "Daily Change %"];
     const rows = holdings.map((h) => [
@@ -39,9 +37,7 @@ export default function PortfolioCsvExport({
       ["", "", "", "", "", "", "", "", ""],
       ["TOTAL", "", "", "", totalValue.toFixed(2), totalCost.toFixed(2), totalPnl.toFixed(2), totalPnlPct.toFixed(2), ""],
     ];
-    const csv = [header, ...rows, ...summary]
-      .map((row) => row.join(","))
-      .join("\n");
+    const csv = toCsv([header, ...rows, ...summary]);
 
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -54,7 +50,6 @@ export default function PortfolioCsvExport({
 
   return (
     <Button
-      ref={ref}
       variant="outline"
       size="sm"
       onClick={exportCsv}

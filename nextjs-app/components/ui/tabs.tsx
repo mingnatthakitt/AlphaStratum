@@ -1,45 +1,101 @@
 "use client";
 
-import * as React from "react";
+/**
+ * Accessible controlled tabs (no external dependency).
+ * Fully controlled: the parent owns `value`/`onValueChange` and conditionally
+ * renders tab content, so inactive panels fetch nothing.
+ */
+import React, { createContext, useContext, useId } from "react";
 import { cn } from "@/lib/utils";
 
-const Tabs = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("w-full", className)} {...props} />
-  )
-);
-Tabs.displayName = "Tabs";
+interface TabsContextValue {
+  value: string;
+  setValue: (value: string) => void;
+  baseId: string;
+}
 
-const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={cn("inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground", className)}
-      {...props}
-    />
-  )
-);
-TabsList.displayName = "TabsList";
+const TabsContext = createContext<TabsContextValue | null>(null);
 
-const TabsTrigger = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(
-  ({ className, ...props }, ref) => (
+function useTabs() {
+  const ctx = useContext(TabsContext);
+  if (!ctx) throw new Error("Tabs parts must be used inside <Tabs>");
+  return ctx;
+}
+
+interface TabsProps {
+  value: string;
+  onValueChange: (value: string) => void;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function Tabs({ value, onValueChange, children, className }: TabsProps) {
+  const baseId = useId();
+  return (
+    <TabsContext.Provider value={{ value, setValue: onValueChange, baseId }}>
+      <div className={className}>{children}</div>
+    </TabsContext.Provider>
+  );
+}
+
+interface TabsListProps {
+  children: React.ReactNode;
+  className?: string;
+  "aria-label"?: string;
+}
+
+export function TabsList({ children, className, "aria-label": ariaLabel }: TabsListProps) {
+  return (
+    <div role="tablist" aria-label={ariaLabel} className={cn("flex flex-wrap gap-2", className)}>
+      {children}
+    </div>
+  );
+}
+
+interface TabsTriggerProps {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
+  const { value: active, setValue, baseId } = useTabs();
+  const selected = active === value;
+  return (
     <button
-      ref={ref}
-      className={cn(
-        "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow",
-        className
-      )}
-      {...props}
-    />
-  )
-);
-TabsTrigger.displayName = "TabsTrigger";
+      type="button"
+      role="tab"
+      id={`${baseId}-tab-${value}`}
+      aria-selected={selected}
+      aria-controls={`${baseId}-panel-${value}`}
+      data-state={selected ? "active" : "inactive"}
+      tabIndex={selected ? 0 : -1}
+      onClick={() => setValue(value)}
+      className={className}
+    >
+      {children}
+    </button>
+  );
+}
 
-const TabsContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("mt-2 focus-visible:outline-none", className)} {...props} />
-  )
-);
-TabsContent.displayName = "TabsContent";
+interface TabsContentProps {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}
 
-export { Tabs, TabsList, TabsTrigger, TabsContent };
+/** Renders children only when active — inactive tabs never mount (or fetch). */
+export function TabsContent({ value, children, className }: TabsContentProps) {
+  const { value: active, baseId } = useTabs();
+  if (active !== value) return null;
+  return (
+    <div
+      role="tabpanel"
+      id={`${baseId}-panel-${value}`}
+      aria-labelledby={`${baseId}-tab-${value}`}
+      className={className}
+    >
+      {children}
+    </div>
+  );
+}

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ChatAdvisor from "@/components/ChatAdvisor";
-import { WatchlistTabs, SearchModal, type WatchlistItem } from "@/components/StockWatchlist";
+import { WatchlistTabs, SearchModal } from "@/components/StockWatchlist";
 import { useWatchlist } from "@/contexts/WatchlistContext";
 
 export default function AdvisorPage() {
@@ -25,7 +25,7 @@ export default function AdvisorPage() {
         activeSymbol={activeSymbol}
         onSelect={setActiveSymbol}
         onRemove={removeStock}
-        onAdd={() => setShowSearch(true)}
+        onOpenSearch={() => setShowSearch(true)}
       />
 
       <Card>

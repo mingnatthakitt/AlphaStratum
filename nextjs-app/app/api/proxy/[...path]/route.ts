@@ -1,10 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const AUTH_KEY = process.env.AUTH_KEY || "";
+// Read lazily (not at module load) so runtime env changes and tests work.
+function apiUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+}
 
-// Headers we refuse to forward. These come from the browser and would either
-// break the upstream request or leak session state to a different service.
+function authKey(): string {
+  return process.env.AUTH_KEY || "";
+}
+
+/**
+ * Server-side proxy to the FastAPI backend.
+ * - Attaches the shared auth key as an `X-Auth-Key` header (server-only env
+ *   var, never in the bundle). A header rather than `?key=` so the secret does
+ *   not land in uvicorn access logs, proxy/CDN logs or browser history.
+ * - Allowlists backend prefixes so browser calls can't reach admin/management
+ *   routes (e.g. /models/cache/purge) through this proxy.
+ * - Buffers JSON responses (no SSE/streaming endpoints exist yet).
+ */
+
+// Only these backend routers are reachable from the browser.
+const ALLOWED_PREFIXES = ["fetch/", "models/", "rag/", "portfolio/"];
+// Management/ops routes that must not be callable through the site.
+const BLOCKED_SEGMENTS = ["cache/purge", "cache/stats"];
+
 const SKIP_REQUEST_HEADERS = new Set([
   "host",
   "connection",
@@ -13,7 +32,15 @@ const SKIP_REQUEST_HEADERS = new Set([
   "set-cookie",
   "transfer-encoding",
   "upgrade",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  // A caller must never be able to supply or override the shared secret.
+  "x-auth-key",
 ]);
+
+// The body is buffered into memory before forwarding, so cap it. The largest
+// legitimate request is a chat message, which the backend caps at 2000 chars.
+const MAX_BODY_BYTES = 64 * 1024;
 
 function buildUpstreamHeaders(req: NextRequest, forceContentType?: string): Headers {
   const out = new Headers();
@@ -27,11 +54,19 @@ function buildUpstreamHeaders(req: NextRequest, forceContentType?: string): Head
   return out;
 }
 
+function isAllowedPath(pathSegments: string[]): boolean {
+  // Reject traversal attempts before URL normalization could resolve them.
+  if (pathSegments.some((seg) => seg === "." || seg === "..")) return false;
+  const joined = pathSegments.join("/").toLowerCase();
+  if (!ALLOWED_PREFIXES.some((prefix) => joined.startsWith(prefix))) return false;
+  if (BLOCKED_SEGMENTS.some((segment) => joined.includes(segment))) return false;
+  return true;
+}
+
 function buildUpstreamUrl(req: NextRequest, pathSegments: string[]): URL {
-  const url = new URL(`${API_URL}/${pathSegments.join("/")}`);
-  // Server-side auth — always the server key, never caller-supplied.
-  url.searchParams.set("key", AUTH_KEY);
-  // Forward caller query params (skip any caller-supplied `key` to prevent override).
+  const url = new URL(`${apiUrl()}/${pathSegments.map(encodeURIComponent).join("/")}`);
+  // Forward caller query params (skip any caller-supplied `key` to prevent
+  // override — the server key now travels in a header, never the query string).
   req.nextUrl.searchParams.forEach((value, key) => {
     if (key === "key") return;
     url.searchParams.set(key, value);
@@ -39,21 +74,45 @@ function buildUpstreamUrl(req: NextRequest, pathSegments: string[]): URL {
   return url;
 }
 
+function upstreamTimeoutMs(pathSegments: string[]): number {
+  const joined = pathSegments.join("/").toLowerCase();
+  // LLM chat and the cold screener legitimately need longer than the default;
+  // everything else aborts quickly so the UI fails fast.
+  if (joined.startsWith("rag/chat")) return 90_000;
+  if (joined.startsWith("fetch/screener")) return 45_000;
+  return 25_000;
+}
+
 async function proxyRequest(req: NextRequest, pathSegments: string[]): Promise<NextResponse> {
+  if (!isAllowedPath(pathSegments)) {
+    return NextResponse.json({ detail: "Path not allowed" }, { status: 403 });
+  }
+
   const url = buildUpstreamUrl(req, pathSegments);
 
   const isJsonBody = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
   const headers = buildUpstreamHeaders(req, isJsonBody ? "application/json" : undefined);
+  // Always the server's own key, attached after the allowlist check passes.
+  headers.set("X-Auth-Key", authKey());
 
   const init: RequestInit = {
     method: req.method,
     headers,
-    // 25s hard cap — Vercel hobby timeout is 10s, pro is 60s; stay under both.
-    signal: AbortSignal.timeout(25_000),
+    // Abort long-hanging upstream calls. Note: serverless platforms enforce
+    // their own (often shorter) function timeout — see LIMITATIONS.md.
+    signal: AbortSignal.timeout(upstreamTimeoutMs(pathSegments)),
   };
 
   if (isJsonBody) {
+    // Reject oversized bodies before buffering them.
+    const declared = Number(req.headers.get("content-length") ?? "");
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      return NextResponse.json({ detail: "Request body too large" }, { status: 413 });
+    }
     const body = await req.text();
+    if (body.length > MAX_BODY_BYTES) {
+      return NextResponse.json({ detail: "Request body too large" }, { status: 413 });
+    }
     if (body.length > 0) init.body = body;
   }
 
@@ -68,12 +127,15 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]): Promise<N
   // Read body as text first, then try to parse — upstream may return non-JSON on errors.
   const rawBody = await response.text();
   const contentType = response.headers.get("content-type") || "";
-  const isJson = contentType.includes("application/json");
 
-  if (isJson) {
+  if (contentType.includes("application/json")) {
     try {
       const data = rawBody.length > 0 ? JSON.parse(rawBody) : {};
-      return NextResponse.json(data, { status: response.status });
+      const res = NextResponse.json(data, { status: response.status });
+      // Pass caching hints through so the browser can cache proxied data.
+      const cacheControl = response.headers.get("cache-control");
+      if (cacheControl) res.headers.set("Cache-Control", cacheControl);
+      return res;
     } catch {
       // Fall through to text passthrough.
     }

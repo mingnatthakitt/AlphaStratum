@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { stockApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { QueryRender } from "@/components/QueryFeedback";
 import MonteCarloChart from "@/components/MonteCarloChart";
 import RegimeCondChart from "@/components/RegimeCondChart";
 import GarchChart from "@/components/GarchChart";
@@ -16,8 +17,7 @@ import BollingerChart from "@/components/BollingerChart";
 import PairsCard from "@/components/PairsCard";
 import AnalystCard from "@/components/AnalystCard";
 import AtrChart from "@/components/AtrChart";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { WatchlistTabs, SearchModal, type WatchlistItem } from "@/components/StockWatchlist";
+import { WatchlistTabs, SearchModal } from "@/components/StockWatchlist";
 import { useWatchlist } from "@/contexts/WatchlistContext";
 import { Info, TrendingUp, Activity, BarChart2, AlertTriangle, GitBranch, Users, Zap } from "lucide-react";
 
@@ -31,7 +31,7 @@ const MODELS_LEGEND = [
   {
     tab: "garch",
     title: "GARCH Volatility",
-    desc: "GARCH(1,1) models conditional volatility — how uncertainty evolves over time. Forecasts the next 30 days of daily volatility, annualized for comparison with historical levels.",
+    desc: "GARCH(1,1) models conditional volatility — how uncertainty evolves over time. Forecasts the next 30 days of daily volatility (per trading day, not annualized).",
     formula: "σ²ₜ = ω + α·r²ₜ₋₁ + β·σ²ₜ₋₁",
   },
   {
@@ -63,86 +63,91 @@ const MODELS_NAV = [
   { id: "garch", label: "GARCH", icon: Activity },
   { id: "markov", label: "Markov Chain", icon: BarChart2 },
   { id: "rsi", label: "RSI", icon: Activity },
-  { id: "macd", label: "MACD", icon: Activity },
+  { id: "macd", label: "MACD", icon: BarChart2 },
   { id: "bollinger", label: "Bollinger", icon: BarChart2 },
   { id: "atr", label: "ATR", icon: Zap },
   { id: "pairs", label: "Pairs / Beta", icon: GitBranch },
   { id: "analyst", label: "Analyst", icon: Users },
-  { id: "correlation", label: "Correlation", icon: GitBranch },
+  { id: "correlation", label: "Correlation", icon: AlertTriangle },
 ];
 
 export default function ModelsPage() {
   const { watchlist, activeSymbol, setActiveSymbol, addStock, removeStock } = useWatchlist();
   const [showSearch, setShowSearch] = useState(false);
+  const [activeTab, setActiveTab] = useState("montecarlo");
   const [corrSector, setCorrSector] = useState("tech");
   const [mcHorizon, setMcHorizon] = useState(30);
   const [mcMode, setMcMode] = useState<"standard" | "regime-cond">("standard");
-  // Pairs second ticker
   const [pairsB, setPairsB] = useState("AMD");
-  const { data: mcData, isLoading: mcLoading } = useQuery({
+
+  const isActive = (tab: string) => activeTab === tab;
+
+  // Queries are gated on their tab being active — switching symbols no longer
+  // fires 10 simultaneous bursts; inactive tabs never mount or fetch.
+  const { data: mcData, isLoading: mcLoading, isPending: mcPending, isError: mcError, error: mcErrorDetails, refetch: mcRefetch } = useQuery({
     queryKey: ["montecarlo", activeSymbol, mcHorizon],
     queryFn: () => stockApi.getMonteCarlo(activeSymbol, mcHorizon),
-    enabled: !!activeSymbol,
+    enabled: isActive("montecarlo") && mcMode === "standard",
   });
 
-  const { data: mcRegimeCondData, isLoading: mcRegimeCondLoading } = useQuery({
+  const { data: mcRegimeCondData, isLoading: mcRegimeCondLoading, isPending: mcRegimeCondPending, isError: mcRegimeCondError, error: mcRegimeCondErrorDetails, refetch: mcRegimeCondRefetch } = useQuery({
     queryKey: ["montecarlo-regime-cond", activeSymbol, mcHorizon],
     queryFn: () => stockApi.getMonteCarloRegimeCond(activeSymbol, mcHorizon),
-    enabled: !!activeSymbol && mcMode === "regime-cond",
+    enabled: isActive("montecarlo") && mcMode === "regime-cond",
   });
 
-  const { data: garchData, isLoading: garchLoading } = useQuery({
+  const { data: garchData, isLoading: garchLoading, isPending: garchPending, isError: garchError, error: garchErrorDetails, refetch: garchRefetch } = useQuery({
     queryKey: ["garch", activeSymbol],
     queryFn: () => stockApi.getGarch(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("garch"),
   });
 
-  const { data: corrData, isLoading: corrLoading } = useQuery({
+  const { data: corrData, isLoading: corrLoading, isPending: corrPending, isError: corrError, error: corrErrorDetails, refetch: corrRefetch } = useQuery({
     queryKey: ["correlation-graph", corrSector],
     queryFn: () => stockApi.getCorrelationGraph(corrSector),
-    enabled: true,
+    enabled: isActive("correlation"),
   });
 
-  const { data: markovData, isLoading: markovLoading } = useQuery({
+  const { data: markovData, isLoading: markovLoading, isPending: markovPending, isError: markovError, error: markovErrorDetails, refetch: markovRefetch } = useQuery({
     queryKey: ["markov", activeSymbol],
     queryFn: () => stockApi.getMarkov(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("markov"),
   });
 
-  const { data: rsiData, isLoading: rsiLoading } = useQuery({
+  const { data: rsiData, isLoading: rsiLoading, isPending: rsiPending, isError: rsiError, error: rsiErrorDetails, refetch: rsiRefetch } = useQuery({
     queryKey: ["rsi", activeSymbol],
     queryFn: () => stockApi.getRSI(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("rsi"),
   });
 
-  const { data: macdData, isLoading: macdLoading } = useQuery({
+  const { data: macdData, isLoading: macdLoading, isPending: macdPending, isError: macdError, error: macdErrorDetails, refetch: macdRefetch } = useQuery({
     queryKey: ["macd", activeSymbol],
     queryFn: () => stockApi.getMACD(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("macd"),
   });
 
-  const { data: bollingerData, isLoading: bollingerLoading } = useQuery({
+  const { data: bollingerData, isLoading: bollingerLoading, isPending: bollingerPending, isError: bollingerError, error: bollingerErrorDetails, refetch: bollingerRefetch } = useQuery({
     queryKey: ["bollinger", activeSymbol],
     queryFn: () => stockApi.getBollinger(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("bollinger"),
   });
 
-  const { data: pairsData, isLoading: pairsLoading } = useQuery({
+  const { data: pairsData, isLoading: pairsLoading, isPending: pairsPending, isError: pairsError, error: pairsErrorDetails, refetch: pairsRefetch } = useQuery({
     queryKey: ["pairs", activeSymbol, pairsB],
     queryFn: () => stockApi.getPairs(activeSymbol, pairsB),
-    enabled: !!activeSymbol && !!pairsB && activeSymbol !== pairsB,
+    enabled: isActive("pairs") && !!pairsB && activeSymbol !== pairsB,
   });
 
-  const { data: analystData, isLoading: analystLoading } = useQuery({
+  const { data: analystData, isLoading: analystLoading, isPending: analystPending, isError: analystError, error: analystErrorDetails, refetch: analystRefetch } = useQuery({
     queryKey: ["analyst", activeSymbol],
     queryFn: () => stockApi.getAnalyst(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("analyst"),
   });
 
-  const { data: atrData, isLoading: atrLoading } = useQuery({
+  const { data: atrData, isLoading: atrLoading, isPending: atrPending, isError: atrError, error: atrErrorDetails, refetch: atrRefetch } = useQuery({
     queryKey: ["atr", activeSymbol],
     queryFn: () => stockApi.getAtr(activeSymbol),
-    enabled: !!activeSymbol,
+    enabled: isActive("atr"),
   });
 
   return (
@@ -156,31 +161,27 @@ export default function ModelsPage() {
         activeSymbol={activeSymbol}
         onSelect={setActiveSymbol}
         onRemove={removeStock}
-        onAdd={() => setShowSearch(true)}
+        onOpenSearch={() => setShowSearch(true)}
       />
 
-      {/* Sticky anchor nav */}
-      <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b mb-4">
-        <div className="flex gap-1.5 overflow-x-auto py-2 px-1">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList aria-label="Model sections" className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b py-2">
           {MODELS_NAV.map((m) => {
             const Icon = m.icon;
             return (
-              <button
+              <TabsTrigger
                 key={m.id}
-                onClick={() => document.getElementById(m.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-primary/20 hover:text-primary whitespace-nowrap transition-colors shrink-0"
+                value={m.id}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-primary/20 hover:text-primary whitespace-nowrap transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
               >
                 <Icon className="w-3.5 h-3.5" />
                 {m.label}
-              </button>
+              </TabsTrigger>
             );
           })}
-        </div>
-      </div>
+        </TabsList>
 
-      <Tabs defaultValue="montecarlo" className="w-full">
-
-        <TabsContent value="montecarlo" id="montecarlo" className="mt-4">
+        <TabsContent value="montecarlo" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Monte Carlo — {activeSymbol}</CardTitle>
@@ -188,9 +189,7 @@ export default function ModelsPage() {
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
                 <p>{MODELS_LEGEND[0].desc}</p>
               </div>
-              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">
-                {MODELS_LEGEND[0].formula}
-              </p>
+              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">{MODELS_LEGEND[0].formula}</p>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className="text-xs text-muted-foreground">Horizon:</span>
                 <div className="flex gap-1">
@@ -214,7 +213,9 @@ export default function ModelsPage() {
                       key={m}
                       onClick={() => setMcMode(m)}
                       className={`px-2.5 py-1 font-medium transition-colors ${
-                        mcMode === m ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        mcMode === m
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80"
                       }`}
                     >
                       {m === "standard" ? "Standard" : "Regime-Cond"}
@@ -231,25 +232,31 @@ export default function ModelsPage() {
             </CardHeader>
             <CardContent>
               {mcMode === "standard" ? (
-                mcLoading ? (
-                  <Skeleton className="h-[400px] w-full" />
-                ) : mcData?.data ? (
-                  <MonteCarloChart data={mcData.data} />
-                ) : (
-                  <div className="h-[400px] flex items-center justify-center text-muted-foreground">No data available</div>
-                )
-              ) : mcRegimeCondLoading ? (
-                <Skeleton className="h-[400px] w-full" />
-              ) : mcRegimeCondData?.data ? (
-                <RegimeCondChart data={mcRegimeCondData.data} />
+                <QueryRender
+                  data={mcData?.data}
+                  isLoading={mcLoading} isPending={mcPending}
+                  isError={mcError} error={mcErrorDetails}
+                  refetch={mcRefetch}
+                  height="400px"
+                >
+                  {(data) => <MonteCarloChart data={data} />}
+                </QueryRender>
               ) : (
-                <div className="h-[400px] flex items-center justify-center text-muted-foreground">No data available</div>
+                <QueryRender
+                  data={mcRegimeCondData?.data}
+                  isLoading={mcRegimeCondLoading} isPending={mcRegimeCondPending}
+                  isError={mcRegimeCondError} error={mcRegimeCondErrorDetails}
+                  refetch={mcRegimeCondRefetch}
+                  height="400px"
+                >
+                  {(data) => <RegimeCondChart data={data} />}
+                </QueryRender>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="garch" id="garch" className="mt-4">
+        <TabsContent value="garch" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>GARCH Volatility — {activeSymbol}</CardTitle>
@@ -257,25 +264,17 @@ export default function ModelsPage() {
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
                 <p>{MODELS_LEGEND[1].desc}</p>
               </div>
-              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">
-                {MODELS_LEGEND[1].formula}
-              </p>
+              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">{MODELS_LEGEND[1].formula}</p>
             </CardHeader>
             <CardContent>
-              {garchLoading ? (
-                <Skeleton className="h-[400px] w-full" />
-              ) : garchData?.data ? (
-                <GarchChart data={garchData.data} />
-              ) : (
-                <div className="h-[400px] flex items-center justify-center text-muted-foreground">
-                  No data available
-                </div>
-              )}
+              <QueryRender data={garchData?.data} isLoading={garchLoading} isPending={garchPending} isError={garchError} error={garchErrorDetails} refetch={garchRefetch} height="400px">
+                {(data) => <GarchChart data={data} />}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="markov" id="markov" className="mt-4">
+        <TabsContent value="markov" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Markov Regime Chain — {activeSymbol}</CardTitle>
@@ -283,25 +282,17 @@ export default function ModelsPage() {
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
                 <p>{MODELS_LEGEND[2].desc}</p>
               </div>
-              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">
-                {MODELS_LEGEND[2].formula}
-              </p>
+              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">{MODELS_LEGEND[2].formula}</p>
             </CardHeader>
             <CardContent>
-              {markovLoading ? (
-                <Skeleton className="h-[400px] w-full" />
-              ) : markovData?.data ? (
-                <MarkovChart data={markovData.data} />
-              ) : (
-                <div className="h-[400px] flex items-center justify-center text-muted-foreground">
-                  No data available
-                </div>
-              )}
+              <QueryRender data={markovData?.data} isLoading={markovLoading} isPending={markovPending} isError={markovError} error={markovErrorDetails} refetch={markovRefetch} height="400px">
+                {(data) => <MarkovChart data={data} />}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="rsi" id="rsi" className="mt-4">
+        <TabsContent value="rsi" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>RSI — {activeSymbol}</CardTitle>
@@ -311,18 +302,14 @@ export default function ModelsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {rsiLoading ? (
-                <Skeleton className="h-[300px] w-full" />
-              ) : rsiData?.data ? (
-                <RSIChart rsi={rsiData.data.rsi} signal={rsiData.data.signal} history={rsiData.data.history} />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">No data available</div>
-              )}
+              <QueryRender data={rsiData?.data} isLoading={rsiLoading} isPending={rsiPending} isError={rsiError} error={rsiErrorDetails} refetch={rsiRefetch}>
+                {(data) => <RSIChart rsi={data.rsi} signal={data.signal} history={data.history} dates={data.dates} />}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="macd" id="macd" className="mt-4">
+        <TabsContent value="macd" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>MACD — {activeSymbol}</CardTitle>
@@ -332,110 +319,129 @@ export default function ModelsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {macdLoading ? (
-                <Skeleton className="h-[300px] w-full" />
-              ) : macdData?.data ? (
-                <MACDBarChart
-                  macd={macdData.data.macd}
-                  signal={macdData.data.signal}
-                  histogram={macdData.data.histogram}
-                  macdHistory={macdData.data.macdHistory}
-                  signalHistory={macdData.data.signalHistory}
-                  histogramHistory={macdData.data.histogramHistory}
-                />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">No data available</div>
-              )}
+              <QueryRender data={macdData?.data} isLoading={macdLoading} isPending={macdPending} isError={macdError} error={macdErrorDetails} refetch={macdRefetch}>
+                {(data) => (
+                  <MACDBarChart
+                    macd={data.macd}
+                    signal={data.signal}
+                    histogram={data.histogram}
+                    macdHistory={data.macdHistory}
+                    signalHistory={data.signalHistory}
+                    histogramHistory={data.histogramHistory}
+                    dates={data.dates}
+                  />
+                )}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="bollinger" id="bollinger" className="mt-4">
+        <TabsContent value="bollinger" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Bollinger Bands — {activeSymbol}</CardTitle>
               <div className="flex items-start gap-2 text-xs text-muted-foreground mt-1">
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
-                <p>20-day SMA ± 2 standard deviations. %B shows where price sits within the bands (above1 = above upper band, below 0 = below lower band). Bandwidth measures volatility expansion/contraction.</p>
+                <p>20-day SMA ± 2 standard deviations. %B shows where price sits within the bands (above 1 = above upper band, below 0 = below lower band). Bandwidth measures volatility expansion/contraction.</p>
               </div>
             </CardHeader>
             <CardContent>
-              {bollingerLoading ? (
-                <Skeleton className="h-[300px] w-full" />
-              ) : bollingerData?.data ? (
-                <BollingerChart
-                  sma={bollingerData.data.sma}
-                  upper={bollingerData.data.upper}
-                  lower={bollingerData.data.lower}
-                  bandwidth={bollingerData.data.bandwidth}
-                  percentB={bollingerData.data.percentB}
-                  period={bollingerData.data.period}
-                  numStd={bollingerData.data.numStd}
-                  history={bollingerData.data.history}
-                />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">No data available</div>
-              )}
+              <QueryRender data={bollingerData?.data} isLoading={bollingerLoading} isPending={bollingerPending} isError={bollingerError} error={bollingerErrorDetails} refetch={bollingerRefetch}>
+                {(data) => (
+                  <BollingerChart
+                    sma={data.sma}
+                    upper={data.upper}
+                    lower={data.lower}
+                    bandwidth={data.bandwidth}
+                    percentB={data.percentB}
+                    period={data.period}
+                    numStd={data.numStd}
+                    history={data.history}
+                    dates={data.dates}
+                  />
+                )}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="atr" id="atr" className="mt-4">
+        <TabsContent value="atr" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Average True Range — {activeSymbol}</CardTitle>
               <div className="flex items-start gap-2 text-xs text-muted-foreground mt-1">
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
-                <p>ATR measures realized volatility over the last14 trading days. Use it to size positions: larger ATR = wider stop-loss, smaller position. ATR% (ATR/price) lets you compare volatility across price levels.</p>
+                <p>ATR measures realized volatility over the last 14 trading days. Use it to size positions: larger ATR = wider stop-loss, smaller position. ATR% (ATR/price) lets you compare volatility across price levels.</p>
               </div>
             </CardHeader>
             <CardContent>
-              {atrLoading ? (
-                <Skeleton className="h-[300px] w-full" />
-              ) : atrData?.data ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="p-3 rounded-lg border">
-                      <p className="text-xs text-muted-foreground">ATR (14)</p>
-                      <p className="text-xl font-bold">${atrData.data.atr.toFixed(2)}</p>
+              <QueryRender data={atrData?.data} isLoading={atrLoading} isPending={atrPending} isError={atrError} error={atrErrorDetails} refetch={atrRefetch} emptyMessage="No ATR data available">
+                {(data) => (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="p-3 rounded-lg border">
+                        <p className="text-xs text-muted-foreground">ATR (14)</p>
+                        <p className="text-xl font-bold">${data.atr.toFixed(2)}</p>
+                      </div>
+                      <div className="p-3 rounded-lg border">
+                        <p className="text-xs text-muted-foreground">ATR %</p>
+                        <p
+                          className={`text-xl font-bold ${
+                            data.atrPercent > 3 ? "text-red-400" : data.atrPercent > 1 ? "text-yellow-400" : "text-green-400"
+                          }`}
+                        >
+                          {data.atrPercent.toFixed(2)}%
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-lg border">
+                        <p className="text-xs text-muted-foreground">Signal</p>
+                        <p
+                          className={`text-xl font-bold capitalize ${
+                            data.signal === "high" ? "text-red-400" : data.signal === "normal" ? "text-yellow-400" : "text-green-400"
+                          }`}
+                        >
+                          {data.signal}
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-lg border">
+                        <p className="text-xs text-muted-foreground">Last Price</p>
+                        <p className="text-xl font-bold">${data.currentPrice.toFixed(2)}</p>
+                      </div>
                     </div>
-                    <div className="p-3 rounded-lg border">
-                      <p className="text-xs text-muted-foreground">ATR %</p>
-                      <p className={`text-xl font-bold ${atrData.data.atrPercent > 3 ? "text-red-400" : atrData.data.atrPercent > 1 ? "text-yellow-400" : "text-green-400"}`}>
-                        {atrData.data.atrPercent.toFixed(2)}%
+                    <AtrChart data={data} />
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>
+                        Volatility signal: <span className="font-medium capitalize">{data.signal}</span> —{" "}
+                        {data.signal === "high"
+                          ? "High volatility (>3% ATR), consider smaller positions"
+                          : data.signal === "normal"
+                            ? "Normal volatility (1-3% ATR)"
+                            : "Low volatility (<1% ATR), wider stop-loss tolerance"}
+                      </p>
+                      <p>
+                        Position sizing example: risk 2% of a $50,000 portfolio = <span className="font-medium">$1,000</span>. Position
+                        size = $1,000 / ATR ={" "}
+                        <span className="font-medium">{data.atr > 0 ? `$${(1000 / data.atr).toFixed(0)}` : "—"}</span> worth of{" "}
+                        {activeSymbol}.
                       </p>
                     </div>
-                    <div className="p-3 rounded-lg border">
-                      <p className="text-xs text-muted-foreground">Signal</p>
-                      <p className={`text-xl font-bold capitalize ${atrData.data.signal === "high" ? "text-red-400" : atrData.data.signal === "normal" ? "text-yellow-400" : "text-green-400"}`}>
-                        {atrData.data.signal}
-                      </p>
-                    </div>
-                    <div className="p-3 rounded-lg border">
-                      <p className="text-xs text-muted-foreground">Last Price</p>
-                      <p className="text-xl font-bold">${atrData.data.currentPrice.toFixed(2)}</p>
-                    </div>
                   </div>
-                  <AtrChart data={atrData.data} />
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>Volatility signal: <span className="font-medium capitalize">{atrData.data.signal}</span> — {atrData.data.signal === "high" ? "High volatility (>3% ATR), consider smaller positions" : atrData.data.signal === "normal" ? "Normal volatility (1-3% ATR)" : "Low volatility (<1% ATR), wider stop-loss tolerance"}</p>
-                    <p>Position sizing example: risk2% of a $50,000 portfolio =<span className="font-medium">$1,000</span>. Position size = $1,000 / ATR = <span className="font-medium">{atrData.data.atr > 0 ? `$${(1000 / atrData.data.atr).toFixed(0)}` : "—"}</span> worth of {activeSymbol}.</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">No ATR data available</div>
-              )}
+                )}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="pairs" id="pairs" className="mt-4">
+        <TabsContent value="pairs" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Pairs / Beta — {activeSymbol} vs ?</CardTitle>
+              <CardTitle>Pairs / Beta — {activeSymbol} vs {pairsB || "?"}</CardTitle>
               <div className="flex items-start gap-2 text-xs text-muted-foreground mt-1">
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
-                <p>Beta measures {activeSymbol}&rsquo;s sensitivity to market moves. Correlation shows how directionally aligned the two stocks are. Based on 1-year daily log returns.</p>
+                <p>
+                  Beta measures {activeSymbol}&rsquo;s sensitivity to moves in {pairsB || "the other ticker"}. Correlation shows how
+                  directionally aligned the two stocks are. Based on one year of date-aligned daily log returns.
+                </p>
               </div>
               <div className="flex items-center gap-2 mt-2">
                 <span className="text-xs text-muted-foreground">Compare with:</span>
@@ -444,24 +450,26 @@ export default function ModelsPage() {
                   onChange={(e) => setPairsB(e.target.value.toUpperCase())}
                   className="w-20 h-7 rounded border border-input bg-background px-2 text-xs uppercase"
                   maxLength={10}
+                  aria-label="Second ticker symbol for pairs comparison"
                 />
               </div>
             </CardHeader>
             <CardContent>
-              {pairsLoading ? (
-                <Skeleton className="h-[200px] w-full" />
-              ) : pairsData?.data ? (
-                <PairsCard data={pairsData.data} />
-              ) : (
-                <div className="h-[200px] flex items-center justify-center text-muted-foreground">
-                  Enter a ticker to compare
-                </div>
-              )}
+              <QueryRender
+                data={pairsData?.data}
+                isLoading={pairsLoading} isPending={pairsPending}
+                isError={pairsError} error={pairsErrorDetails}
+                refetch={pairsRefetch}
+                height="200px"
+                emptyMessage={activeSymbol === pairsB ? "Pick a ticker different from the active one" : "Enter a ticker to compare"}
+              >
+                {(data) => <PairsCard data={data} />}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="analyst" id="analyst" className="mt-4">
+        <TabsContent value="analyst" className="mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Analyst Ratings — {activeSymbol}</CardTitle>
@@ -471,27 +479,22 @@ export default function ModelsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {analystLoading ? (
-                <Skeleton className="h-[300px] w-full" />
-              ) : analystData?.data ? (
-                <AnalystCard data={analystData.data} symbol={activeSymbol} />
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-muted-foreground">No analyst data available</div>
-              )}
+              <QueryRender data={analystData?.data} isLoading={analystLoading} isPending={analystPending} isError={analystError} error={analystErrorDetails} refetch={analystRefetch} emptyMessage="No analyst data available">
+                {(data) => <AnalystCard data={data} symbol={activeSymbol} />}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="correlation" id="correlation" className="mt-4">
+        <TabsContent value="correlation" className="mt-4">
           <Card>
             <CardHeader>
+              <CardTitle>Correlation Network</CardTitle>
               <div className="flex items-start gap-2 text-xs text-muted-foreground mt-1">
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/60" />
                 <p>{MODELS_LEGEND[3].desc}</p>
               </div>
-              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">
-                {MODELS_LEGEND[3].formula}
-              </p>
+              <p className="text-[10px] font-mono text-muted-foreground/60 mt-1">{MODELS_LEGEND[3].formula}</p>
               <div className="flex gap-2 mt-3">
                 {CORRELATION_SECTORS.map((s) => (
                   <button
@@ -509,22 +512,24 @@ export default function ModelsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {corrLoading ? (
-                <Skeleton className="h-[500px] w-full" />
-              ) : corrData?.data ? (
-                <CorrelationGraph nodes={corrData.data.nodes} edges={corrData.data.edges} />
-              ) : (
-                <div className="h-[500px] flex items-center justify-center text-muted-foreground">
-                  Loading sector correlation network...
-                </div>
-              )}
+              <QueryRender
+                data={corrData?.data}
+                isLoading={corrLoading} isPending={corrPending}
+                isError={corrError} error={corrErrorDetails}
+                refetch={corrRefetch}
+                height="500px"
+                emptyMessage="Loading sector correlation network..."
+              >
+                {(data) => <CorrelationGraph nodes={data.nodes} edges={data.edges} />}
+              </QueryRender>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
       <p className="text-xs text-muted-foreground text-center">
-        All models use 15-minute cached results. Regime detection is threshold-based (20-day rolling returns), not HMM-smoothed. Monte Carlo forecasts are probability distributions — not predictions. Not financial advice.
+        All models use 15-minute cached results. Regime detection is threshold-based (daily return rules), not HMM-smoothed. Monte Carlo
+        forecasts are probability distributions — not predictions. Not financial advice.
       </p>
 
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} onAdd={addStock} />}

@@ -1,212 +1,68 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { createChart, IChartApi, Time, LineSeries } from "lightweight-charts";
+import { useEffect, useMemo, useRef } from "react";
 import type { MonteCarloRegimeCondResult } from "@/lib/api";
+import {
+  AMBER_FAN,
+  BLUE_FAN,
+  ChartLegend,
+  GREEN_FAN,
+  RED_FAN,
+  createFanSeries,
+  safeRemoveSeries,
+  useChart,
+} from "@/hooks/useChart";
 
 interface Props {
   data: MonteCarloRegimeCondResult;
 }
 
-const REGIME_COLORS = {
-  bull:     "#22c55e",
-  bear:     "#ef4444",
-  sideways: "#f59e0b",
-  blended:  "#3b82f6",
-};
-
-function datesToTimes(dates: string[]): Time[] {
-  return dates.map((d) => {
-    const [y, m, day] = d.split("-").map(Number);
-    return Math.floor(new Date(y, m - 1, day).getTime() / 1000) as Time;
-  });
-}
-
 export default function RegimeCondChart({ data }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
+  const chart = useChart(containerRef);
+
+  // Real forecast dates from the backend (fall back to fabrication in the helper).
+  const forecastDates = useMemo(
+    () => data.regimeProbabilities.map((r) => r.date),
+    [data.regimeProbabilities],
+  );
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!chart) return;
 
-    const chart = createChart(containerRef.current, {
-      layout: {
-        background: { color: "transparent" },
-        textColor: "hsl(var(--muted-foreground))",
-      },
-      grid: {
-        vertLines: { color: "hsl(var(--border))" },
-        horzLines: { color: "hsl(var(--border))" },
-      },
-      crosshair: { mode: 1 },
-      timeScale: {
-        borderColor: "hsl(var(--border))",
-        timeVisible: true,
-        tickMarkFormatter: (time: Time) => {
-          const d = new Date(Number(time) * 1000);
-          return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        },
-      },
-      rightPriceScale: {
-        borderColor: "hsl(var(--border))",
-        scaleMargins: { top: 0.05, bottom: 0.05 },
-        borderVisible: true,
-      },
-    });
-
-    const times = datesToTimes(data.regimeProbabilities.map((p) => p.date));
-
-    // ── Draw each regime fan as line series ──
-    for (const [regime, color] of Object.entries(REGIME_COLORS) as [keyof typeof REGIME_COLORS, string][]) {
-      if (regime === "blended") continue;
-      const fan = data.fans[regime as "bull" | "bear" | "sideways"];
-      if (!fan) continue;
-
-      // p95 outer bound (dashed, faint)
-      const p95 = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: true,
-        lastValueVisible: false,
-        priceLineWidth: 0,
-      });
-      p95.setData(times.map((t, i) => ({ time: t, value: fan.p95[i] })));
-
-      // p75 inner bound (dashed)
-      const p75 = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 1,
-        lineStyle: 3,
-        priceLineVisible: true,
-        lastValueVisible: false,
-        priceLineWidth: 0,
-      });
-      p75.setData(times.map((t, i) => ({ time: t, value: fan.p75[i] })));
-
-      // p50 median (solid, prominent)
-      const p50 = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 1.5,
-        priceLineVisible: true,
-        lastValueVisible: true,
-        priceLineWidth: 0,
-      });
-      p50.setData(times.map((t, i) => ({ time: t, value: fan.p50[i] })));
-
-      // p25 inner bound (dashed)
-      const p25 = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 1,
-        lineStyle: 3,
-        priceLineVisible: true,
-        lastValueVisible: false,
-        priceLineWidth: 0,
-      });
-      p25.setData(times.map((t, i) => ({ time: t, value: fan.p25[i] })));
-
-      // p5 outer bound (dashed, faint)
-      const p05 = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: true,
-        lastValueVisible: false,
-        priceLineWidth: 0,
-      });
-      p05.setData(times.map((t, i) => ({ time: t, value: fan.p5[i] })));
-    }
-
-    // ── Blended fan on top (bold blue) ──
-    const blendedP95 = chart.addSeries(LineSeries, {
-      color: REGIME_COLORS.blended,
-      lineWidth: 1,
-      lineStyle: 2,
-      priceLineVisible: true,
-      lastValueVisible: false,
-      priceLineWidth: 0,
-    });
-    blendedP95.setData(times.map((t, i) => ({ time: t, value: data.blended.p95[i] })));
-
-    const blendedP75 = chart.addSeries(LineSeries, {
-      color: REGIME_COLORS.blended,
-      lineWidth: 1,
-      lineStyle: 3,
-      priceLineVisible: true,
-      lastValueVisible: false,
-      priceLineWidth: 0,
-    });
-    blendedP75.setData(times.map((t, i) => ({ time: t, value: data.blended.p75[i] })));
-
-    const blendedP50 = chart.addSeries(LineSeries, {
-      color: REGIME_COLORS.blended,
-      lineWidth: 2.5,
-      priceLineVisible: true,
-      lastValueVisible: true,
-      priceLineWidth: 0,
-    });
-    blendedP50.setData(times.map((t, i) => ({ time: t, value: data.blended.p50[i] })));
-
-    const blendedP25 = chart.addSeries(LineSeries, {
-      color: REGIME_COLORS.blended,
-      lineWidth: 1,
-      lineStyle: 3,
-      priceLineVisible: true,
-      lastValueVisible: false,
-      priceLineWidth: 0,
-    });
-    blendedP25.setData(times.map((t, i) => ({ time: t, value: data.blended.p25[i] })));
-
-    const blendedP05 = chart.addSeries(LineSeries, {
-      color: REGIME_COLORS.blended,
-      lineWidth: 1,
-      lineStyle: 2,
-      priceLineVisible: true,
-      lastValueVisible: false,
-      priceLineWidth: 0,
-    });
-    blendedP05.setData(times.map((t, i) => ({ time: t, value: data.blended.p5[i] })));
+    // Blended fan is the headline; the three regime fans are faint context.
+    const blended = createFanSeries(chart, forecastDates, data.blended, BLUE_FAN, true);
+    const bull = createFanSeries(chart, forecastDates, data.fans.bull, GREEN_FAN);
+    const bear = createFanSeries(chart, forecastDates, data.fans.bear, RED_FAN);
+    const sideways = createFanSeries(chart, forecastDates, data.fans.sideways, AMBER_FAN);
+    const all = [...blended, ...bull, ...bear, ...sideways];
 
     chart.timeScale().fitContent();
-    chartRef.current = chart;
-
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth });
-    });
-    ro.observe(containerRef.current);
-
     return () => {
-      ro.disconnect();
-      chart.remove();
+      for (const s of all) safeRemoveSeries(chart, s);
     };
-  }, [data]);
+  }, [chart, data, forecastDates]);
 
   return (
     <div>
       <div ref={containerRef} className="h-[400px] w-full" />
-      <div className="flex flex-wrap gap-x-6 gap-y-1 justify-center mt-2 text-xs">
-        {[
-          { label: "Bull fan", color: REGIME_COLORS.bull, sub: "p5–p95 range" },
-          { label: "Bear fan", color: REGIME_COLORS.bear, sub: "p5–p95 range" },
-          { label: "Sideways fan", color: REGIME_COLORS.sideways, sub: "p5–p95 range" },
-          { label: "Blended", color: REGIME_COLORS.blended, sub: "prob-weighted avg" },
-        ].map(({ label, color, sub }) => (
-          <span key={label} className="flex items-center gap-1.5">
-            <span className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
-            <span>
-              {label} <span className="text-muted-foreground">{sub}</span>
-            </span>
-          </span>
-        ))}
+      <div className="flex justify-center mt-2">
+        <ChartLegend
+          items={[
+            { label: "Blended", color: BLUE_FAN.median },
+            { label: "Bull fan", color: GREEN_FAN.median },
+            { label: "Bear fan", color: RED_FAN.median },
+            { label: "Sideways fan", color: AMBER_FAN.median },
+          ]}
+        />
       </div>
       <p className="text-xs text-muted-foreground mt-1 text-center">
-        Regime-conditional GBM · {data.horizon}d horizon · σ = {(data.sigma * 100).toFixed(2)}%/day ({data.volatilitySource === "garch" ? "GARCH" : "historical"} vol)
-        {data.currentRegime && (
-          <span> · Current: <span className="capitalize font-medium">{data.currentRegime}</span></span>
-        )}
+        Last price: ${data.lastPrice.toFixed(2)} · {data.horizon} day horizon · GARCH(1,1) volatility ·
+        current regime: <span className="capitalize font-medium">{data.currentRegime}</span>
       </p>
       <p className="text-xs text-muted-foreground/60 text-center mt-0.5">
-        Colored fans = regime-conditional paths. Blended (blue) = probability-weighted average across all regimes.
+        Three regime-conditional GBM fans blended by Markov n-step probabilities — regime weights converge
+        to the stationary distribution as the horizon grows.
       </p>
     </div>
   );
