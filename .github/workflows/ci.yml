@@ -52,7 +52,7 @@ jobs:
         working-directory: nextjs-app
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Node 22: jsdom (vitest's environment) depends on undici >= 8,
           # which requires Node >= 22 — on Node 20 vitest dies with
