@@ -1,6 +1,6 @@
 # Direct dependencies, pinned for reproducible builds (Render/CI).
 # Transitive deps (pandas, scipy, requests, ...) resolve from these pins.
-fastapi==0.141.1
+fastapi==0.142.2
 uvicorn[standard]==0.54.0
 yfinance==1.7.0
 numpy==2.5.3
